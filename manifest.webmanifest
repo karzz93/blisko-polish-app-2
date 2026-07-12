@@ -1,0 +1,61 @@
+{
+  "name": "Blisko — Polish for family",
+  "short_name": "Blisko",
+  "description": "An adaptive, offline-first Polish coach for real conversations with family.",
+  "id": "./index.html",
+  "start_url": "./index.html#dashboard",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101315",
+  "theme_color": "#101315",
+  "lang": "en",
+  "categories": [
+    "education",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Talk to family",
+      "short_name": "Talk",
+      "url": "./index.html#talk",
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Review memories",
+      "short_name": "Review",
+      "url": "./index.html#review",
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

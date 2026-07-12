@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#101315" />
+  <meta name="description" content="An adaptive, offline-first Polish coach for real family conversations." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Blisko — Polish for family</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <div id="app" class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#dashboard" aria-label="Blisko home">
+        <span class="brand-mark" aria-hidden="true"><span>B</span></span>
+        <span class="brand-copy">
+          <strong>blisko</strong>
+          <small>Polish for family</small>
+        </span>
+      </a>
+
+      <nav id="desktop-nav" class="nav-list"></nav>
+
+      <div class="sidebar-spacer"></div>
+
+      <section class="daily-mini-card" aria-label="Daily learning goal">
+        <div class="mini-card-top">
+          <span>Today</span>
+          <strong id="sidebar-goal-label">0 / 15 min</strong>
+        </div>
+        <div class="mini-progress"><span id="sidebar-goal-bar" style="width:0%"></span></div>
+        <p id="sidebar-nudge">One useful sentence is enough to keep momentum.</p>
+      </section>
+
+      <button class="profile-button" id="profile-button" type="button" aria-label="Open settings">
+        <span class="profile-avatar">K</span>
+        <span class="profile-copy">
+          <strong>Kars</strong>
+          <small id="profile-level">Starting Polish</small>
+        </span>
+        <span class="profile-chevron" aria-hidden="true">›</span>
+      </button>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <div class="topbar-title-wrap">
+          <button class="mobile-logo" id="mobile-logo" type="button" aria-label="Go to dashboard">
+            <span class="brand-mark small"><span>B</span></span>
+          </button>
+          <div>
+            <p class="eyebrow" id="page-eyebrow">YOUR COACH</p>
+            <h1 id="page-title">Today</h1>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <div class="status-pill" id="connection-pill" title="The core app works without an internet connection">
+            <span class="status-dot"></span>
+            <span id="connection-label">Offline ready</span>
+          </div>
+          <button class="icon-button install-hidden" id="install-button" type="button" aria-label="Install app" title="Install app">
+            <span data-icon="download"></span>
+          </button>
+          <button class="streak-button" id="streak-button" type="button" aria-label="Study streak">
+            <span class="streak-flame">◒</span>
+            <strong id="streak-count">0</strong>
+          </button>
+          <button class="icon-button" id="theme-button" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span id="theme-icon" data-icon="sun"></span>
+          </button>
+        </div>
+      </header>
+
+      <main id="main-content" class="main-content" tabindex="-1"></main>
+    </div>
+
+    <nav id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation"></nav>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="true"></div>
+
+  <noscript>
+    <div class="noscript-card">Blisko needs JavaScript to run. All learning data stays on this device by default.</div>
+  </noscript>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

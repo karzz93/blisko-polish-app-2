@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.1.2';
+export const APP_VERSION = '1.1.3';
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Today', shortLabel: 'Today', icon: 'home' },
@@ -907,6 +907,50 @@ export const CONVERSATIONS = {
 };
 
 export const TUTOR_TOPICS = [
+  {
+    id: 'count-one-ten',
+    keywords: [
+      'count to ten', 'count till ten', 'count to 10', 'count till 10', 'count from 1 to 10',
+      'numbers one to ten', 'numbers 1 to 10', 'polish numbers', 'counting',
+      'tellen tot tien', 'tellen tot 10', 'tel tot tien', 'tel tot 10', 'hoe tel ik tot tien', 'hoe tel ik tot 10', 'cijfers een tot tien', 'poolse cijfers', 'poolse getallen',
+      'liczyć do dziesięciu', 'liczby od jednego do dziesięciu',
+    ],
+    title: 'Count from 1 to 10 in Polish',
+    nl: 'Voor gewoon tellen zeg je: jeden, dwa, trzy, cztery, pięć, sześć, siedem, osiem, dziewięć, dziesięć. Eén en twee veranderen later soms mee met het geslacht van een zelfstandig naamwoord, maar voor los tellen zijn dit de juiste basisvormen.',
+    en: 'For simple counting, say: jeden, dwa, trzy, cztery, pięć, sześć, siedem, osiem, dziewięć, dziesięć. One and two can later change with the gender of a noun, but these are the correct basic counting forms.',
+    examples: [
+      ['1 — jeden', 'één', 'one'],
+      ['2 — dwa', 'twee', 'two'],
+      ['3 — trzy', 'drie', 'three'],
+      ['4 — cztery', 'vier', 'four'],
+      ['5 — pięć', 'vijf', 'five'],
+      ['6 — sześć', 'zes', 'six'],
+      ['7 — siedem', 'zeven', 'seven'],
+      ['8 — osiem', 'acht', 'eight'],
+      ['9 — dziewięć', 'negen', 'nine'],
+      ['10 — dziesięć', 'tien', 'ten'],
+    ],
+    exercise: { prompt: 'What comes after pięć?', answer: 'sześć', options: ['cztery', 'sześć', 'siedem'] },
+  },
+  {
+    id: 'family-dinner-tutor',
+    keywords: [
+      'family dinner', 'dinner with family', 'family meal', 'christmas dinner', 'family gathering',
+      'familiediner', 'eten met familie', 'kerstdiner', 'familiebijeenkomst',
+      'obiad rodzinny', 'kolacja z rodziną', 'wigilia',
+    ],
+    title: 'A practical family-dinner mini lesson',
+    nl: 'Begin met drie functies: iets aanbieden, reageren op eten en het gesprek herstellen. Daarmee kun je al meedoen zonder lange grammaticale uitleg. Gebruik krótkie, warme zinnen en stel daarna één eenvoudige vraag terug.',
+    en: 'Start with three functions: offering something, reacting to food, and repairing the conversation. That lets you participate without a long grammar lesson. Use short, warm sentences and then ask one simple question back.',
+    examples: [
+      ['Czy mogę pomóc?', 'Kan ik helpen?', 'Can I help?'],
+      ['To jest bardzo smaczne.', 'Dit is erg lekker.', 'This is very tasty.'],
+      ['Poproszę trochę.', 'Graag een beetje.', "I'd like a little, please."],
+      ['Możesz powtórzyć?', 'Kun je dat herhalen?', 'Can you repeat that?'],
+      ['A ty, co lubisz?', 'En jij, wat vind jij lekker?', 'And you, what do you like?'],
+    ],
+    exercise: { prompt: 'Your mother-in-law offers more food. Choose a warm answer:', answer: 'Tak, poproszę trochę.', options: ['Tak, poproszę trochę.', 'Nie rozumiem pogody.', 'Gdzie jest samochód?'] },
+  },
   {
     id: 'go-poland',
     keywords: ['do polski','do polska','going to poland','naar polen','idę do polski','jadę do polski'],

@@ -2321,6 +2321,15 @@ html[data-theme="dark"] .tutor-bubble.user {
   margin-bottom: 0;
 }
 
+.tutor-language-primary {
+  color: var(--text);
+}
+
+.tutor-language-secondary {
+  color: var(--muted);
+  font-size: 10px !important;
+}
+
 .tutor-bubble .example-block {
   margin: 10px 0;
   padding: 11px;

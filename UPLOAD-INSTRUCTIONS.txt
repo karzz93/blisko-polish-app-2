@@ -1,13 +1,27 @@
-BLISKO v1.1.2 — CUMULATIVE LANGUAGE-CONSISTENCY UPDATE
+BLISKO v1.1.3 — TUTOR RELEVANCE FIX
 
 Upload every file from this update directly to the ROOT of your existing GitHub repository.
 Keep the same repository and GitHub Pages URL so your local learning progress remains intact.
 
-This cumulative update includes:
-- v1.1.0: the full progress and CEFR dashboard.
-- v1.1.1: the answer-visibility fix for meaning exercises.
-- v1.1.2: English is now the primary interface language on Progress, with Dutch shown consistently as secondary support.
+This update is cumulative with the app you already have:
+- v1.1.0: progress and CEFR dashboard.
+- v1.1.1: translations stay hidden until a meaning exercise is answered.
+- v1.1.2: English is the primary interface language and Dutch is secondary support.
+- v1.1.3: safer tutor intent matching, counting from 1–10, family-dinner tutoring, direct word/phrase lookups, and honest clarification instead of unrelated guesses.
 
-After GitHub Pages finishes deploying, open Blisko online, refresh once, close it completely, and reopen it.
-If the old version remains, open it online once more and restart it so service worker v1.1.2 can activate.
-Do not clear site data; that is where your learning progress is stored.
+Files in the small update:
+- app.js
+- data.js
+- styles.css
+- tutor.js
+- sw.js
+- UPLOAD-INSTRUCTIONS.txt
+
+After GitHub Pages finishes deploying:
+1. Open your GitHub Pages address in Chrome while online.
+2. Refresh once.
+3. Close the installed Blisko app completely.
+4. Reopen it. A second launch may be needed while service worker v1.1.3 activates.
+
+The previously saved wrong counting reply is repaired automatically when the updated app starts.
+Do not clear Chrome site data; that is where your learning progress is stored.

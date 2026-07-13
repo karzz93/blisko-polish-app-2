@@ -857,12 +857,12 @@ const tutorWelcome = () => ({
 const renderTutorReply = (reply) => `
   <div class="tutor-bubble">
     <h4>${escapeHtml(reply.title || 'Tutor explanation')}</h4>
-    ${state.settings.showDutch && reply.nl ? `<p><strong>NL</strong> ${escapeHtml(reply.nl)}</p>` : ''}
-    ${state.settings.showEnglish && reply.en ? `<p><strong>EN</strong> ${escapeHtml(reply.en)}</p>` : ''}
+    ${state.settings.showEnglish && reply.en ? `<p class="tutor-language-primary"><strong>EN</strong> ${escapeHtml(reply.en)}</p>` : ''}
+    ${state.settings.showDutch && reply.nl ? `<p class="tutor-language-secondary"><strong>NL</strong> ${escapeHtml(reply.nl)}</p>` : ''}
     ${(reply.examples || []).map((example) => `
       <div class="example-block">
         <strong>${escapeHtml(example[0] || '')}</strong>
-        <span>${state.settings.showDutch ? `NL ${escapeHtml(example[1] || '')}` : ''}${state.settings.showDutch && state.settings.showEnglish ? ' · ' : ''}${state.settings.showEnglish ? `EN ${escapeHtml(example[2] || '')}` : ''}</span>
+        <span>${state.settings.showEnglish ? `EN ${escapeHtml(example[2] || '')}` : ''}${state.settings.showDutch && state.settings.showEnglish ? ' · ' : ''}${state.settings.showDutch ? `NL ${escapeHtml(example[1] || '')}` : ''}</span>
         <button class="text-button" style="margin-top:5px" type="button" data-action="speak" data-text="${escapeHtml(example[0] || '')}">${icon('volume')} Listen</button>
       </div>
     `).join('')}
@@ -883,8 +883,9 @@ function renderTutor() {
   const weak = getWeakItems(state, 3);
   const localMode = !state.settings.aiProxyUrl;
   const prompts = [
+    'How do I count from 1 to 10?',
     'Why is it “do Polski”?',
-    'Explain iść vs jechać in Dutch.',
+    'Explain iść vs jechać.',
     'Correct: Lubię kawa.',
     'How do I talk about my hobbies?',
     'Give me a family dinner exercise.',
@@ -896,7 +897,7 @@ function renderTutor() {
         <header class="tutor-head">
           <div class="tutor-identity">
             <span class="coach-avatar">B</span>
-            <span><strong>Blisko tutor</strong><span>Dutch-first · English-supported · remembers your weak spots</span></span>
+            <span><strong>Blisko tutor</strong><span>English-first · Dutch-supported · remembers your weak spots</span></span>
           </div>
           <span class="local-pill">${localMode ? 'LOCAL · OFFLINE' : 'AI PROXY + LOCAL FALLBACK'}</span>
         </header>
@@ -2470,8 +2471,29 @@ const setupInstallPrompt = () => {
   });
 };
 
+const repairKnownTutorMisroutes = () => {
+  const messages = state?.tutor?.messages;
+  if (!Array.isArray(messages) || messages.length < 2) return false;
+  let changed = false;
+
+  for (let index = 1; index < messages.length; index += 1) {
+    const previous = messages[index - 1];
+    const current = messages[index];
+    if (previous?.role !== 'user' || current?.role !== 'assistant') continue;
+
+    const askedAboutCounting = /(?:count|numbers?).*(?:10|ten)|(?:tellen|cijfers|getallen).*(?:10|tien)/i.test(previous.text || '');
+    const oldFalseMatch = /sound of polish ł/i.test(current.reply?.title || '');
+    if (askedAboutCounting && oldFalseMatch) {
+      current.reply = localTutorReply(previous.text, state);
+      changed = true;
+    }
+  }
+  return changed;
+};
+
 const initialize = async () => {
   state = await loadState();
+  if (repairKnownTutorMisroutes()) await save({ immediate: true });
   setTheme(state.settings.theme || 'dark');
   const initialHash = location.hash.replace('#', '');
   currentView = PAGE_META[initialHash] ? initialHash : (PAGE_META[state.ui.lastView] ? state.ui.lastView : 'dashboard');

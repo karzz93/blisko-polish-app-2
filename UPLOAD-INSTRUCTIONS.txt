@@ -1,15 +1,12 @@
-BLISKO - FLAT GITHUB PAGES VERSION
+BLISKO v1.1.1 — ANSWER-LEAK FIX
 
-This version is intentionally flat: every file belongs in the root of your GitHub repository.
+Upload the files from this package directly to the ROOT of your existing GitHub repository.
+Keep the same repository and GitHub Pages URL so your local learning progress remains intact.
 
-1. Delete the existing files from the blisko-polish-app repository, or create a new repository.
-2. Extract this ZIP.
-3. Upload ALL extracted files directly to the repository root.
-4. Confirm that index.html, styles.css, app.js, data.js, sw.js and the icon files are all visible on the first page of the repository.
-5. In GitHub: Settings > Pages > Deploy from a branch > main > /(root) > Save.
-6. Wait a few minutes and open:
-   https://karzz93.github.io/blisko-polish-app/
-7. Refresh once. If the old unstyled version appears, clear site data or uninstall the old PWA and reopen the URL.
-8. In Chrome choose Install app.
+Changed behavior:
+- Meaning-choice exercises no longer show Dutch or English translations before you answer.
+- The bilingual meaning is revealed only after the answer is submitted.
+- A defensive display guard also protects exercises created by older cached versions.
 
-Do not upload the ZIP itself. Upload the files extracted from it.
+After GitHub Pages finishes deploying, open Blisko online, close it completely, and reopen it.
+If the old version remains, open it online once more and restart it so service worker v1.1.1 can activate.

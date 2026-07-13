@@ -1,4 +1,4 @@
-const CACHE_NAME = 'blisko-shell-flat-v1.0.1';
+const CACHE_NAME = 'blisko-shell-flat-v1.1.1';
 const APP_SHELL = [
   './',
   './index.html',

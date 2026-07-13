@@ -379,6 +379,7 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     topic: item.topic,
     grammar: item.grammar || [],
     source: item,
+    translations: { nl: item.nl || '', en: item.en || '' },
     answer: item.pl,
   };
 
@@ -389,10 +390,13 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
       return {
         ...base,
         type: 'choice',
+        direction: 'pl-to-meaning',
+        answerKind: 'meaning',
         skill: 'Meaning',
         instruction: 'Choose the meaning',
         mainText: item.pl,
-        subText: item.itemType === 'word' ? item.type : dualTranslation,
+        safeHint: item.itemType === 'word' ? item.type : 'Translation hidden until you answer.',
+        subText: '',
         answer: translation,
         options,
         audioText: item.pl,
@@ -402,6 +406,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     return {
       ...base,
       type: 'choice',
+      direction: 'meaning-to-pl',
+      answerKind: 'polish',
       skill: 'Recall',
       instruction: 'Choose the natural Polish',
       mainText: translation,
@@ -417,6 +423,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     return {
       ...base,
       type: 'ordering',
+      direction: 'meaning-to-pl',
+      answerKind: 'polish',
       skill: 'Sentence building',
       instruction: 'Build the sentence',
       mainText: translation,
@@ -432,9 +440,12 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     return {
       ...base,
       type: 'listening',
+      direction: 'audio-to-meaning',
+      answerKind: 'meaning',
       skill: 'Listening',
       instruction: 'Listen and choose the meaning',
       mainText: 'Tap to listen',
+      safeHint: 'You can replay it as often as you need.',
       subText: 'You can replay it as often as you need.',
       answer: translation,
       options,
@@ -446,6 +457,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     return {
       ...base,
       type: 'speaking',
+      direction: 'pl-to-speech',
+      answerKind: 'speech',
       skill: 'Speaking',
       instruction: 'Say it out loud',
       mainText: item.pl,
@@ -458,6 +471,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
   return {
     ...base,
     type: 'typing',
+    direction: 'meaning-to-pl',
+    answerKind: 'polish',
     skill: 'Active recall',
     instruction: 'Write it in Polish',
     mainText: translation,
@@ -645,7 +660,7 @@ export const getMetrics = (state) => {
 
   const dailyGoal = Math.max(5, state.profile.dailyGoal || 15);
   const comfortGap = clamp(0.76 - conversationReadiness, 0, 0.76);
-  const estimatedWeeks = comfortGap === 0 ? 0 : Math.max(2, Math.ceil((comfortGap * 1300) / (dailyGoal * 7)));
+  const estimatedWeeks = comfortGap === 0 ? 0 : Math.max(2, Math.ceil((comfortGap * 2800) / (dailyGoal * 7)));
 
   return {
     masteredWords,

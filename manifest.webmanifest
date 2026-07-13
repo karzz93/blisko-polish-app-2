@@ -56,6 +56,17 @@
           "sizes": "192x192"
         }
       ]
+    },
+    {
+      "name": "See learning progress",
+      "short_name": "Progress",
+      "url": "./index.html#progress",
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

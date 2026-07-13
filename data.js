@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.1.1';
+export const APP_VERSION = '1.1.2';
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Today', shortLabel: 'Today', icon: 'home' },

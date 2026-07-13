@@ -1046,12 +1046,18 @@ function renderProgress() {
     + Object.keys(state.progress.concepts).length * 2;
   const estimateEvidence = clamp(evidenceUnits / 110);
   const estimateConfidence = estimateEvidence < 0.25 ? 'early estimate' : estimateEvidence < 0.62 ? 'growing evidence' : 'well supported';
+  const forecastCopy = estimatedDays
+    ? `Realistic range: ${estimateLow}–${estimateHigh} days. The estimate becomes more personal after every speaking attempt and conversation.`
+    : 'Your current evidence has reached the comfortable family-small-talk target.';
+  const forecastCopyNl = estimatedDays
+    ? `Realistische bandbreedte: ${estimateLow}–${estimateHigh} dagen. De schatting wordt persoonlijker na elke spreekoefening en elk gesprek.`
+    : 'Je huidige resultaten hebben het doel voor ontspannen familiegesprekken bereikt.';
   const production = clamp(metrics.speaking * 0.48 + metrics.grammar * 0.27 + metrics.conversationReadiness * 0.25);
   const snapshotSkills = [
-    { title: 'Lezen', en: 'Reading', value: metrics.reading },
-    { title: 'Produceren', en: 'Producing', value: production },
-    { title: 'Luisteren', en: 'Listening', value: metrics.listening },
-    { title: 'Spreken', en: 'Speaking', value: metrics.speaking },
+    { title: 'Reading', secondary: 'Lezen', value: metrics.reading },
+    { title: 'Producing', secondary: 'Produceren', value: production },
+    { title: 'Listening', secondary: 'Luisteren', value: metrics.listening },
+    { title: 'Speaking', secondary: 'Spreken', value: metrics.speaking },
   ];
   const detailedSkills = [
     { id: 'speaking', title: 'Speaking', value: metrics.speaking, icon: 'mic', detail: `${state.stats.speakingAttempts} attempts` },
@@ -1063,10 +1069,10 @@ function renderProgress() {
   const hasSkillEvidence = snapshotSkills.some((skill) => skill.value > 0.01);
   const strongestSkill = hasSkillEvidence
     ? [...snapshotSkills].sort((a, b) => b.value - a.value)[0]
-    : { title: 'Nog meten', en: 'baseline pending', value: 0 };
+    : { title: 'Baseline pending', secondary: 'Nog te meten', value: 0 };
   const weakestSkill = hasSkillEvidence
     ? [...snapshotSkills].sort((a, b) => a.value - b.value)[0]
-    : { title: 'Spreken', en: 'Speaking', value: 0 };
+    : { title: 'Speaking', secondary: 'Spreken', value: 0 };
   const conceptRows = GRAMMAR_CONCEPTS
     .map((concept) => ({ concept, progress: state.progress.concepts[concept.id] || { confidence: 0, reviews: 0, mistakes: 0 } }))
     .sort((a, b) => b.progress.reviews - a.progress.reviews || b.concept.priority - a.concept.priority)
@@ -1097,21 +1103,21 @@ function renderProgress() {
       <section class="progress-snapshot">
         <div class="progress-snapshot-heading">
           <div>
-            <p class="eyebrow">PROGRESS / VOORTGANG</p>
-            <h2>Jouw Pools, in cijfers</h2>
-            <p>Gebaseerd op wat je echt kunt terughalen, verstaan en zeggen—not on lessons merely opened.</p>
+            <p class="eyebrow progress-page-eyebrow">PROGRESS <small lang="nl">VOORTGANG</small></p>
+            <h2><span>Your Polish, in numbers</span><small lang="nl">Jouw Pools, in cijfers</small></h2>
+            <p class="progress-intro"><span>Based on what you can genuinely recall, understand, and say—not on lessons merely opened.</span><small lang="nl">Gebaseerd op wat je echt kunt terughalen, verstaan en zeggen.</small></p>
           </div>
           <span class="evidence-chip">${Math.round(estimateEvidence * 100)}% evidence · ${escapeHtml(estimateConfidence)}</span>
         </div>
 
         <article class="card comfort-forecast-card" style="--comfort-angle:${Math.round(comfortProgress * 360)}deg">
           <div class="comfort-forecast-copy">
-            <span class="progress-overline">TOT COMFORTABELE FAMILIEGESPREKKEN</span>
+            <span class="progress-overline">TIME TO COMFORTABLE FAMILY CONVERSATIONS<small lang="nl">Tot comfortabele familiegesprekken</small></span>
             <div class="comfort-forecast-number">
-              <strong>${estimatedDays ? `≈ ${estimatedDays}` : 'Nu'}</strong>
-              <span>${estimatedDays ? 'dagen' : 'klaar'}</span>
+              <strong>${estimatedDays ? `≈ ${estimatedDays}` : 'Now'}</strong>
+              <span>${estimatedDays ? 'days' : 'ready'}</span>
             </div>
-            <p>${estimatedDays ? `Realistic range: ${estimateLow}–${estimateHigh} days. The estimate becomes more personal after every speaking attempt and conversation.` : 'Your current evidence has reached the comfortable family-small-talk target.'}</p>
+            <p><span>${escapeHtml(forecastCopy)}</span><small class="secondary-sentence" lang="nl">${escapeHtml(forecastCopyNl)}</small></p>
           </div>
           <div class="comfort-readiness-ring" aria-label="${Math.round(comfortProgress * 100)} percent ready for comfortable family conversations">
             <div><strong>${Math.round(comfortProgress * 100)}%</strong><span>ready</span></div>
@@ -1124,25 +1130,25 @@ function renderProgress() {
 
         <div class="progress-stat-grid">
           <button class="card progress-stat-card" type="button" data-action="go-view" data-view="library">
-            <span class="progress-stat-label">WOORDENSCHAT <small>VOCABULARY</small></span>
+            <span class="progress-stat-label">VOCABULARY <small lang="nl">WOORDENSCHAT</small></span>
             <span class="progress-stat-value"><strong>${metrics.masteredWords}</strong><b>/ ${totalWords}</b></span>
             <span class="progress-stat-detail">${learningWords} learning · ${fragileWords} need support</span>
             <span class="progress-stat-icon">${icon('book')}</span>
           </button>
           <article class="card progress-stat-card">
-            <span class="progress-stat-label">NIVEAU <small>ESTIMATED CEFR</small></span>
+            <span class="progress-stat-label">ESTIMATED LEVEL <small lang="nl">GESCHAT NIVEAU</small></span>
             <span class="progress-stat-value"><strong>${levelLabel}</strong></span>
             <span class="progress-stat-detail">${Math.round(metrics.cefrProgress * 100)}% toward ${metrics.nextCefr} · ${escapeHtml(estimateConfidence)}</span>
             <span class="progress-stat-icon">${icon('flag')}</span>
           </article>
           <article class="card progress-stat-card">
-            <span class="progress-stat-label">STREAK <small>ACTIVE DAYS</small></span>
+            <span class="progress-stat-label">STREAK <small lang="nl">ACTIEVE REEKS</small></span>
             <span class="progress-stat-value"><strong>🔥 ${state.stats.streak || 0}</strong></span>
             <span class="progress-stat-detail">best ${state.stats.bestStreak || 0} days · ${activeDays}/14 active recently</span>
             <span class="progress-stat-icon">${icon('calendar')}</span>
           </article>
           <button class="card progress-stat-card" type="button" data-action="go-view" data-view="talk">
-            <span class="progress-stat-label">GESPREKKEN <small>SIMULATED</small></span>
+            <span class="progress-stat-label">CONVERSATIONS <small lang="nl">GESPREKKEN</small></span>
             <span class="progress-stat-value"><strong>💬 ${simulatedConversations}</strong></span>
             <span class="progress-stat-detail">${completedConversations} completed · ${metrics.unlockedConversations} scenarios ready</span>
             <span class="progress-stat-icon">${icon('message')}</span>
@@ -1151,26 +1157,26 @@ function renderProgress() {
 
         <article class="card snapshot-skills-card">
           <div class="snapshot-skills-head">
-            <div><span class="progress-overline">VAARDIGHEDEN / SKILLS</span><p>Your estimate separates understanding from producing Polish.</p></div>
-            <span class="soft-pill">${hasSkillEvidence ? `strongest: ${escapeHtml(strongestSkill.en)}` : escapeHtml(strongestSkill.en)}</span>
+            <div><span class="progress-overline">SKILLS<small lang="nl">Vaardigheden</small></span><p><span>Your estimate separates understanding from producing Polish.</span><small class="secondary-sentence" lang="nl">De schatting maakt onderscheid tussen Pools begrijpen en zelf produceren.</small></p></div>
+            <span class="soft-pill">${hasSkillEvidence ? `strongest: ${escapeHtml(strongestSkill.title)}` : escapeHtml(strongestSkill.title)}</span>
           </div>
           <div class="snapshot-skill-list">
             ${snapshotSkills.map((skill) => `
               <div class="snapshot-skill-row">
-                <span><strong>${escapeHtml(skill.title)}</strong><small>${escapeHtml(skill.en)}</small></span>
+                <span><strong>${escapeHtml(skill.title)}</strong><small lang="nl">${escapeHtml(skill.secondary)}</small></span>
                 <div class="snapshot-skill-track"><i style="width:${Math.round(skill.value * 100)}%"></i></div>
                 <b>${Math.round(skill.value * 100)}%</b>
               </div>
             `).join('')}
           </div>
-          <div class="snapshot-skill-note">${hasSkillEvidence ? `Next leverage point: <strong>${escapeHtml(weakestSkill.en)}</strong>. Blisko will quietly weight this skill more often in review and conversation practice.` : `Complete one short review and one speaking attempt to establish a personal skill baseline.`}</div>
+          <div class="snapshot-skill-note">${hasSkillEvidence ? `Next leverage point: <strong>${escapeHtml(weakestSkill.title)}</strong>. Blisko will quietly weight this skill more often in review and conversation practice.` : `Complete one short review and one speaking attempt to establish a personal skill baseline.`}</div>
         </article>
       </section>
 
       <section class="progress-overview">
         <article class="card cefr-card" style="--cefr-progress:${Math.round(metrics.cefrProgress * 100)}%">
           <div>
-            <p class="eyebrow">ESTIMATED COMMUNICATIVE LEVEL</p>
+            <p class="eyebrow progress-page-eyebrow">ESTIMATED COMMUNICATIVE LEVEL <small lang="nl">GESCHAT COMMUNICATIEF NIVEAU</small></p>
             <h2>${levelLabel} → ${metrics.nextCefr}</h2>
             <p>This is a conservative estimate from active recall, speaking, listening, grammar patterns, and completed scenarios—not a claim based on lesson count.</p>
             <div class="cefr-scale">
@@ -1181,7 +1187,7 @@ function renderProgress() {
         </article>
 
         <article class="card conversation-card">
-          <span class="pattern-label">NEXT REAL-WORLD WIN</span>
+          <span class="pattern-label progress-bilingual-label">NEXT REAL-WORLD WIN<small lang="nl">Volgende winst in het echte leven</small></span>
           <div class="conversation-count"><strong>${Math.round(nextScenario.score * 100)}%</strong><span>${escapeHtml(nextScenario.scenario.title)} readiness</span></div>
           <p>${metrics.estimatedWeeks ? `At your measured or chosen pace, the model estimates about ${estimatedDays} days to comfortable family small talk.` : 'Your current scenario model has reached the comfortable small-talk target.'}</p>
           <div class="conversation-tags">
@@ -1193,7 +1199,7 @@ function renderProgress() {
 
       <section class="mastery-snapshot-grid">
         <article class="card mastery-distribution-card">
-          <div class="section-heading"><div><h2>Memory distribution</h2><p>Where every curriculum word currently sits.</p></div><span class="soft-pill">+${newlyStable} stable this week</span></div>
+          <div class="section-heading"><div><h2>Memory distribution<small lang="nl">Geheugenverdeling</small></h2><p>Where every curriculum word currently sits.</p></div><span class="soft-pill">+${newlyStable} stable this week</span></div>
           <div class="mastery-segmented-track" aria-label="Vocabulary mastery distribution">
             <span class="segment-strong" style="width:${masterySegments.strong}%"></span>
             <span class="segment-stable" style="width:${masterySegments.stable}%"></span>
@@ -1208,7 +1214,7 @@ function renderProgress() {
           </div>
         </article>
         <article class="card estimate-method-card">
-          <span class="progress-overline">WHY THE NUMBER MOVES</span>
+          <span class="progress-overline">WHY THE NUMBER MOVES<small lang="nl">Waarom de schatting verandert</small></span>
           <h3>Real evidence changes the forecast.</h3>
           <div class="estimate-factor"><span>Conversation readiness</span><b>${Math.round(metrics.conversationReadiness * 100)}%</b><div class="progress-track"><span style="width:${Math.round(metrics.conversationReadiness * 100)}%"></span></div></div>
           <div class="estimate-factor"><span>Speaking evidence</span><b>${Math.round(metrics.speaking * 100)}%</b><div class="progress-track"><span style="width:${Math.round(metrics.speaking * 100)}%"></span></div></div>
@@ -1229,7 +1235,7 @@ function renderProgress() {
 
       <section class="chart-grid">
         <article class="card chart-card">
-          <div class="section-heading"><div><h2>Focused minutes</h2><p>The last fourteen days on this device.</p></div><span class="soft-pill" style="padding:6px 9px;background:var(--green-soft);color:var(--green);font-size:9px">${Math.round(state.stats.totalMinutes)} min total</span></div>
+          <div class="section-heading"><div><h2>Focused minutes<small lang="nl">Gerichte minuten</small></h2><p>The last fourteen days on this device.</p></div><span class="soft-pill" style="padding:6px 9px;background:var(--green-soft);color:var(--green);font-size:9px">${Math.round(state.stats.totalMinutes)} min total</span></div>
           <div class="activity-chart">
             ${activity.map((day) => `
               <div class="chart-column" title="${day.date}: ${day.minutes} minutes">
@@ -1241,7 +1247,7 @@ function renderProgress() {
         </article>
 
         <article class="card chart-card">
-          <div class="section-heading"><div><h2>Grammar patterns</h2><p>Confidence grows through sentences, not rule memorization.</p></div></div>
+          <div class="section-heading"><div><h2>Grammar patterns<small lang="nl">Grammaticapatronen</small></h2><p>Confidence grows through sentences, not rule memorization.</p></div></div>
           <div class="mastery-list">
             ${conceptRows.map(({ concept, progress }) => `
               <div class="mastery-row">
@@ -1925,8 +1931,8 @@ const openSettings = () => {
 
       <section class="settings-section">
         <h3>Explanations and audio</h3>
-        <p>Dutch is the default teaching language; English is available where the contrast is clearer.</p>
-        <div class="toggle-row"><span class="toggle-copy"><strong>Show Dutch explanations</strong><span>Primary comparison language</span></span><label class="switch"><input id="settings-dutch" type="checkbox" ${state.settings.showDutch ? 'checked' : ''}><span class="switch-track"></span></label></div>
+        <p>The interface stays in English. Dutch is the primary comparison and translation language; English remains available as support where it explains the contrast better.</p>
+        <div class="toggle-row"><span class="toggle-copy"><strong>Use Dutch first</strong><span>Primary comparison and translation language</span></span><label class="switch"><input id="settings-dutch" type="checkbox" ${state.settings.showDutch ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Show English support</strong><span>Useful for grammar terminology and direct contrasts</span></span><label class="switch"><input id="settings-english" type="checkbox" ${state.settings.showEnglish ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Auto-speak simulator turns</strong><span>Play each new Polish line automatically</span></span><label class="switch"><input id="settings-auto-speak" type="checkbox" ${state.settings.autoSpeak ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Gentle haptics</strong><span>Small vibration feedback on supported mobile devices</span></span><label class="switch"><input id="settings-haptics" type="checkbox" ${state.settings.haptics ? 'checked' : ''}><span class="switch-track"></span></label></div>

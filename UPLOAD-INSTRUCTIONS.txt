@@ -1,12 +1,13 @@
-BLISKO v1.1.1 — ANSWER-LEAK FIX
+BLISKO v1.1.2 — CUMULATIVE LANGUAGE-CONSISTENCY UPDATE
 
-Upload the files from this package directly to the ROOT of your existing GitHub repository.
+Upload every file from this update directly to the ROOT of your existing GitHub repository.
 Keep the same repository and GitHub Pages URL so your local learning progress remains intact.
 
-Changed behavior:
-- Meaning-choice exercises no longer show Dutch or English translations before you answer.
-- The bilingual meaning is revealed only after the answer is submitted.
-- A defensive display guard also protects exercises created by older cached versions.
+This cumulative update includes:
+- v1.1.0: the full progress and CEFR dashboard.
+- v1.1.1: the answer-visibility fix for meaning exercises.
+- v1.1.2: English is now the primary interface language on Progress, with Dutch shown consistently as secondary support.
 
-After GitHub Pages finishes deploying, open Blisko online, close it completely, and reopen it.
-If the old version remains, open it online once more and restart it so service worker v1.1.1 can activate.
+After GitHub Pages finishes deploying, open Blisko online, refresh once, close it completely, and reopen it.
+If the old version remains, open it online once more and restart it so service worker v1.1.2 can activate.
+Do not clear site data; that is where your learning progress is stored.

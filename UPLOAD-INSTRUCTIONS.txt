@@ -1,27 +1,16 @@
-BLISKO v1.1.3 — TUTOR RELEVANCE FIX
+BLISKO v1.2.1 — BLACK-SCREEN REPAIR
 
-Upload every file from this update directly to the ROOT of your existing GitHub repository.
-Keep the same repository and GitHub Pages URL so your local learning progress remains intact.
+CAUSE FOUND
+Your repository contains app.js from the progressive-hints update, but engine.js, data.js, storage.js, styles.css, index.html and sw.js are still v1.1.3. The new app asks engine.js for hint functions that the old file does not contain, so JavaScript stops before the page can render. icon-192.png is also missing from the repository.
 
-This update is cumulative with the app you already have:
-- v1.1.0: progress and CEFR dashboard.
-- v1.1.1: translations stay hidden until a meaning exercise is answered.
-- v1.1.2: English is the primary interface language and Dutch is secondary support.
-- v1.1.3: safer tutor intent matching, counting from 1–10, family-dinner tutoring, direct word/phrase lookups, and honest clarification instead of unrelated guesses.
+HOW TO REPAIR WITHOUT LOSING PROGRESS
+1. Extract this ZIP on your phone.
+2. In the ROOT of your EXISTING GitHub repository, choose Add file > Upload files.
+3. Select EVERY extracted item, including .nojekyll and icon-192.png.
+4. Commit to main and wait for GitHub Pages to finish deploying.
+5. Open your normal GitHub Pages address in Chrome while online.
+6. Refresh twice, then fully close and reopen the installed app.
+7. If Blisko shows an App Repair panel, tap Repair app cache.
 
-Files in the small update:
-- app.js
-- data.js
-- styles.css
-- tutor.js
-- sw.js
-- UPLOAD-INSTRUCTIONS.txt
-
-After GitHub Pages finishes deploying:
-1. Open your GitHub Pages address in Chrome while online.
-2. Refresh once.
-3. Close the installed Blisko app completely.
-4. Reopen it. A second launch may be needed while service worker v1.1.3 activates.
-
-The previously saved wrong counting reply is repaired automatically when the updated app starts.
-Do not clear Chrome site data; that is where your learning progress is stored.
+DO NOT create a new repository, uninstall the app, or clear Chrome site data.
+The repair button removes only obsolete app-shell caches. It does not touch IndexedDB or localStorage. The database name, state key, manifest ID, scope and website address are unchanged, so your learning progress remains available.

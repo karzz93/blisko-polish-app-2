@@ -5,11 +5,29 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js';
-import { getTodayKey } from './storage.js';
+} from './data.js?v=1.2.1';
+import { getTodayKey } from './storage.js?v=1.2.1';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
+
+const HINT_EVIDENCE_WEIGHTS = [1, 1, 0.92, 0.78, 0.62, 0.42];
+const HINT_INTERVAL_CAPS = [Infinity, Infinity, 14, 5, 2, 0.75];
+
+const POLISH_FUNCTION_WORDS = new Set([
+  'a', 'ale', 'bo', 'czy', 'do', 'i', 'jak', 'jest', 'już', 'na', 'nie', 'o', 'od', 'po',
+  'proszę', 'się', 'to', 'tu', 'w', 'we', 'z', 'za', 'że', 'jeszcze', 'bardzo', 'mogę',
+]);
+
+const ENGLISH_FUNCTION_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'at', 'but', 'can', 'do', 'for', 'from', 'i', 'in', 'is', 'it',
+  'my', 'not', 'of', 'on', 'or', 'the', 'this', 'to', 'we', 'with', 'you', 'yet',
+]);
+
+const DUTCH_FUNCTION_WORDS = new Set([
+  'aan', 'als', 'de', 'dit', 'een', 'en', 'het', 'ik', 'in', 'is', 'kan', 'met', 'naar',
+  'niet', 'nog', 'of', 'om', 'op', 'te', 'van', 'voor', 'wat', 'we', 'je',
+]);
 
 export const ITEM_MAP = new Map([
   ...WORDS.map((item) => [item.id, { ...item, itemType: 'word' }]),
@@ -116,47 +134,527 @@ export const evaluateAnswer = (input, expected) => {
   };
 };
 
-export const ensureItemProgress = (state, itemId) => {
-  if (!state.progress.items[itemId]) {
-    state.progress.items[itemId] = {
-      reps: 0,
-      lapses: 0,
-      correct: 0,
-      incorrect: 0,
-      stability: 0.25,
-      difficulty: 5,
-      confidence: 0,
-      dueAt: new Date(0).toISOString(),
-      lastReviewedAt: null,
-      lastRating: null,
-      history: [],
+const displayTokens = (value = '') => String(value)
+  .match(/[A-Za-zÀ-žĄĆĘŁŃÓŚŹŻąćęłńóśźż0-9]+(?:[’'][A-Za-zÀ-žĄĆĘŁŃÓŚŹŻąćęłńóśźż0-9]+)?|[^\s]/g) || [];
+
+const isWordToken = (token = '') => /[A-Za-zÀ-žĄĆĘŁŃÓŚŹŻąćęłńóśźż0-9]/.test(token);
+
+const joinDisplayTokens = (tokens = []) => tokens
+  .join(' ')
+  .replace(/\s+([,.!?;:])/g, '$1')
+  .replace(/([({])\s+/g, '$1')
+  .replace(/\s+([)}])/g, '$1')
+  .trim();
+
+const normalizedToken = (token = '') => normalizeText(token, { loose: true });
+
+const functionWordsFor = (language = 'pl') => {
+  if (language === 'en') return ENGLISH_FUNCTION_WORDS;
+  if (language === 'nl') return DUTCH_FUNCTION_WORDS;
+  return POLISH_FUNCTION_WORDS;
+};
+
+const maskToken = (token = '', { keepFirst = false } = {}) => {
+  if (!isWordToken(token)) return token;
+  const characters = [...token];
+  const first = keepFirst ? characters[0] : '';
+  const hiddenCount = Math.max(2, Math.min(10, characters.length - (keepFirst ? 1 : 0)));
+  return `${first}${'_'.repeat(hiddenCount)}`;
+};
+
+const maskAnswerStructure = (answer = '', language = 'pl', revealIndexes = []) => {
+  const tokens = displayTokens(answer);
+  const functionWords = functionWordsFor(language);
+  let wordIndex = -1;
+  return joinDisplayTokens(tokens.map((token) => {
+    if (!isWordToken(token)) return token;
+    wordIndex += 1;
+    const normalized = normalizedToken(token);
+    if (revealIndexes.includes(wordIndex) || functionWords.has(normalized)) return token;
+    return maskToken(token, { keepFirst: tokens.filter(isWordToken).length === 1 });
+  }));
+};
+
+const maskEveryAnswerWord = (answer = '') => joinDisplayTokens(displayTokens(answer).map((token) => (
+  isWordToken(token) ? maskToken(token) : token
+)));
+
+const maskAnswerWithPartialWord = (answer = '', language = 'pl', targetIndex = 0, prefixLength = 1) => {
+  const tokens = displayTokens(answer);
+  const functionWords = functionWordsFor(language);
+  let wordIndex = -1;
+  return joinDisplayTokens(tokens.map((token) => {
+    if (!isWordToken(token)) return token;
+    wordIndex += 1;
+    if (wordIndex === targetIndex) {
+      const characters = [...token];
+      const safePrefixLength = Math.max(0, Math.min(prefixLength, Math.max(0, characters.length - 1)));
+      if (!safePrefixLength) return maskToken(token);
+      return `${characters.slice(0, safePrefixLength).join('')}${'_'.repeat(Math.max(2, characters.length - safePrefixLength))}`;
+    }
+    return functionWords.has(normalizedToken(token)) ? token : maskToken(token);
+  }));
+};
+
+const wordEntries = (value = '') => displayTokens(value)
+  .filter(isWordToken)
+  .map((token, index) => ({ token, index, normalized: normalizedToken(token) }));
+
+const redactAnswerSequence = (text = '', answer = '', replacement = '[target form]') => {
+  const targetWords = wordEntries(answer).map((entry) => entry.normalized).filter(Boolean);
+  if (!targetWords.length) return String(text || '');
+  const tokens = displayTokens(text);
+  const wordPositions = tokens
+    .map((token, tokenIndex) => (isWordToken(token) ? { tokenIndex, normalized: normalizedToken(token) } : null))
+    .filter(Boolean);
+  const matches = [];
+  for (let index = 0; index <= wordPositions.length - targetWords.length; index += 1) {
+    const matchesTarget = targetWords.every((target, offset) => wordPositions[index + offset]?.normalized === target);
+    if (matchesTarget) {
+      matches.push({
+        start: wordPositions[index].tokenIndex,
+        end: wordPositions[index + targetWords.length - 1].tokenIndex,
+      });
+      index += targetWords.length - 1;
+    }
+  }
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const match = matches[index];
+    tokens.splice(match.start, match.end - match.start + 1, replacement);
+  }
+  return joinDisplayTokens(tokens);
+};
+
+const protectHintAnswer = (hint = {}, answer = '') => {
+  if (Number(hint.level || 0) >= 5) return hint;
+  const protectedHint = {
+    ...hint,
+    en: redactAnswerSequence(hint.en || '', answer, '[target form]'),
+    nl: redactAnswerSequence(hint.nl || '', answer, '[doelvorm]'),
+  };
+  if (hint.structure) protectedHint.structure = redactAnswerSequence(hint.structure, answer, '___');
+  if (hint.title) protectedHint.title = redactAnswerSequence(hint.title, answer, 'Support');
+  if (normalizeText(hint.revealedWord || '', { loose: true }) === normalizeText(answer, { loose: true })) {
+    protectedHint.revealedWord = '';
+  }
+  return protectedHint;
+};
+
+const getRevealWord = (answer = '', language = 'pl', seed = 0) => {
+  const entries = wordEntries(answer);
+  if (!entries.length) return null;
+  const functionWords = functionWordsFor(language);
+  const content = entries.filter((entry) => !functionWords.has(entry.normalized));
+  const pool = content.length ? content : entries;
+  return pool[Math.abs(Number(seed) || 0) % pool.length];
+};
+
+const sentenceChunkCount = (answer = '') => {
+  const count = wordEntries(answer).length;
+  if (count <= 2) return 1;
+  if (count <= 5) return 2;
+  return 3;
+};
+
+const targetLanguageForExercise = (exercise = {}, fallback = 'pl') => {
+  if (exercise.answerKind === 'meaning') {
+    const answer = normalizeText(exercise.answer || '');
+    const nl = normalizeText(exercise.translations?.nl || '');
+    const en = normalizeText(exercise.translations?.en || '');
+    if (answer && answer === en) return 'en';
+    if (answer && answer === nl) return 'nl';
+    return fallback === 'en' ? 'en' : 'nl';
+  }
+  return 'pl';
+};
+
+const topicScene = (item = {}, answer = '') => {
+  const topic = TOPIC_MAP.get(item.topic);
+  if (!topic) return { en: 'a real conversation', nl: 'een echt gesprek' };
+  const title = topic.title.toLowerCase();
+  const subtitle = topic.subtitle.toLowerCase();
+  const scene = `${title} — ${subtitle}`;
+  const normalizedAnswer = normalizeText(answer, { loose: true });
+  const normalizedScene = normalizeText(scene, { loose: true });
+  const leaksAnswer = normalizedAnswer.length >= 2 && ` ${normalizedScene} `.includes(` ${normalizedAnswer} `);
+  return leaksAnswer
+    ? { en: 'a real conversation', nl: 'een echt gesprek' }
+    : { en: scene, nl: `de situatie “${title}”` };
+};
+
+const typeCoachCopy = (item = {}) => {
+  if (item.itemType === 'phrase') {
+    return {
+      en: 'Treat the line as one speaking block. Recover the intention first, then the exact endings.',
+      nl: 'Behandel de zin als één spreekblok. Haal eerst de bedoeling terug en daarna pas de precieze uitgangen.',
     };
   }
+  if (item.type === 'verb') {
+    return {
+      en: 'Find the verb core first. Polish often carries the person inside the verb ending, so an extra pronoun may be unnecessary.',
+      nl: 'Zoek eerst de kern van het werkwoord. In het Pools zit de persoon vaak al in de uitgang, waardoor een extra voornaamwoord niet nodig is.',
+    };
+  }
+  if (item.type === 'noun') {
+    return {
+      en: 'Picture the object in the scene, then check whether a preposition or verb may change its ending.',
+      nl: 'Zie het voorwerp in de situatie voor je en controleer daarna of een voorzetsel of werkwoord de uitgang verandert.',
+    };
+  }
+  if (item.type === 'expression') {
+    return {
+      en: 'Recall it as a fixed social reaction rather than translating each word separately.',
+      nl: 'Haal het terug als een vaste sociale reactie in plaats van ieder woord apart te vertalen.',
+    };
+  }
+  return {
+    en: 'Recover the conversational intention first. Exact spelling comes after the useful meaning.',
+    nl: 'Haal eerst de bedoeling van het gesprek terug. De precieze spelling komt daarna.',
+  };
+};
+
+export const getHintEvidenceWeight = (level = 0) => HINT_EVIDENCE_WEIGHTS[clamp(Math.round(Number(level) || 0), 0, 5)];
+
+export const generateExerciseHint = (exercise, progress = null, level = 1, {
+  partialIndex = 0,
+  interfaceLanguage = 'en',
+} = {}) => {
+  const safeLevel = clamp(Math.round(Number(level) || 1), 1, 5);
+  const item = exercise?.source || ITEM_MAP.get(exercise?.itemId) || {};
+  const answer = String(exercise?.answer || item.pl || '').trim();
+  const targetLanguage = targetLanguageForExercise(exercise, interfaceLanguage);
+  const words = wordEntries(answer);
+  const firstWord = words[0]?.token || answer.slice(0, 1);
+  const firstLetter = [...firstWord][0] || '';
+  const reveal = getRevealWord(answer, targetLanguage, partialIndex + (progress?.hintsUsed || 0));
+  const revealIndexes = reveal ? [reveal.index] : [];
+  const concept = (exercise?.grammar || item.grammar || []).map((id) => CONCEPT_MAP.get(id)).find(Boolean);
+  const scene = topicScene(item, answer);
+  const historyLead = progress?.lapses >= 2
+    ? `This memory has slipped ${progress.lapses} times, so use the sentence frame rather than forcing the whole answer at once.`
+    : progress?.confidence >= 0.55
+      ? 'You have retrieved this before. Let the opening chunk come back before you search for every ending.'
+      : `Place the answer inside ${scene.en}.`;
+  const historyLeadNl = progress?.lapses >= 2
+    ? `Dit geheugen is al ${progress.lapses} keer weggezakt. Gebruik daarom eerst het zinsframe in plaats van het hele antwoord te forceren.`
+    : progress?.confidence >= 0.55
+      ? 'Je hebt dit eerder teruggehaald. Laat eerst het begin van de zin terugkomen voordat je iedere uitgang zoekt.'
+      : `Plaats het antwoord in ${scene.nl}.`;
+
+  if (safeLevel === 1) {
+    const singleCharacterAnswer = words.length === 1 && [...(words[0]?.token || '')].length <= 1;
+    const itemKind = item.type || item.itemType || 'connector';
+    const listeningLine = exercise?.type === 'listening'
+      ? `Replay it once more and listen for ${words.length === 1 ? 'one key sound' : `the first and last of ${words.length} words`}.`
+      : singleCharacterAnswer
+        ? `It is one very short ${itemKind}; use its job in the sentence. The letter stays hidden.`
+        : `${words.length || 1} word${words.length === 1 ? '' : 's'}; the answer begins with “${firstLetter}”.`;
+    const listeningLineNl = exercise?.type === 'listening'
+      ? `Speel het nog één keer af en luister naar ${words.length === 1 ? 'één kernklank' : `het eerste en laatste van ${words.length} woorden`}.`
+      : singleCharacterAnswer
+        ? `Het is één heel kort woord van het type ${itemKind}; gebruik de functie in de zin. De letter blijft verborgen.`
+        : `${words.length || 1} woord${words.length === 1 ? '' : 'en'}; het antwoord begint met “${firstLetter}”.`;
+    return protectHintAnswer({
+      level: safeLevel,
+      title: 'Gentle nudge',
+      en: `${historyLead} ${listeningLine}`,
+      nl: `${historyLeadNl} ${listeningLineNl}`,
+      answerShown: false,
+    }, answer);
+  }
+
+  if (safeLevel === 2) {
+    const firstStructure = maskAnswerStructure(answer, targetLanguage);
+    const structure = normalizeText(firstStructure, { loose: true }) === normalizeText(answer, { loose: true })
+      ? maskEveryAnswerWord(answer)
+      : firstStructure;
+    return protectHintAnswer({
+      level: safeLevel,
+      title: 'Sentence structure',
+      en: `Use this frame: ${structure}`,
+      nl: `Gebruik dit patroon: ${structure}`,
+      structure,
+      answerShown: false,
+    }, answer);
+  }
+
+  if (safeLevel === 3) {
+    if (words.length === 1) {
+      const token = words[0]?.token || '';
+      const characters = [...token];
+      const itemKind = item.type || item.itemType || 'word';
+      if (characters.length <= 1) {
+        return protectHintAnswer({
+          level: safeLevel,
+          title: 'One key feature',
+          en: `It is a one-letter ${itemKind}. Use its role in the sentence; the letter itself stays hidden until the final support step.`,
+          nl: `Het is een ${itemKind} van één letter. Gebruik de functie in de zin; de letter zelf blijft verborgen tot de laatste hulpstap.`,
+          structure: '__',
+          revealedWord: '',
+          answerShown: false,
+        }, answer);
+      }
+      const prefixLength = characters.length <= 3 ? 1 : Math.min(2, Math.ceil(characters.length / 3));
+      const prefix = characters.slice(0, prefixLength).join('');
+      const structure = `${prefix}${'_'.repeat(Math.max(2, characters.length - prefixLength))}`;
+      return protectHintAnswer({
+        level: safeLevel,
+        title: 'One key element',
+        en: `The word opens with “${prefix}”. Complete the shape: ${structure}`,
+        nl: `Het woord begint met “${prefix}”. Maak de vorm af: ${structure}`,
+        structure,
+        revealedWord: prefix,
+        answerShown: false,
+      }, answer);
+    }
+
+    const contentWords = words.filter((entry) => !functionWordsFor(targetLanguage).has(entry.normalized));
+    if (reveal && contentWords.length <= 1) {
+      const characters = [...reveal.token];
+      if (characters.length <= 1) {
+        const structure = maskAnswerStructure(answer, targetLanguage);
+        return protectHintAnswer({
+          level: safeLevel,
+          title: 'One key feature',
+          en: `The key word is only one letter, so it stays hidden. Use its position in this frame: ${structure}`,
+          nl: `Het kernwoord is maar één letter en blijft daarom verborgen. Gebruik de positie in dit patroon: ${structure}`,
+          structure,
+          revealedWord: '',
+          answerShown: false,
+        }, answer);
+      }
+      const prefixLength = characters.length <= 3 ? 1 : Math.min(2, Math.ceil(characters.length / 3));
+      const prefix = characters.slice(0, prefixLength).join('');
+      const structure = maskAnswerWithPartialWord(answer, targetLanguage, reveal.index, prefixLength);
+      return protectHintAnswer({
+        level: safeLevel,
+        title: 'One key element',
+        en: `The key word opens with “${prefix}”. Complete the frame: ${structure}`,
+        nl: `Het kernwoord begint met “${prefix}”. Maak het patroon af: ${structure}`,
+        structure,
+        revealedWord: prefix,
+        answerShown: false,
+      }, answer);
+    }
+
+    const structure = maskAnswerStructure(answer, targetLanguage, revealIndexes);
+    return protectHintAnswer({
+      level: safeLevel,
+      title: 'One anchor word',
+      en: reveal
+        ? `Anchor word ${reveal.index + 1} is “${reveal.token}”. Now rebuild around it: ${structure}`
+        : `Use this partial frame: ${structure}`,
+      nl: reveal
+        ? `Ankerwoord ${reveal.index + 1} is “${reveal.token}”. Bouw er nu omheen: ${structure}`
+        : `Gebruik dit gedeeltelijke patroon: ${structure}`,
+      structure,
+      revealedWord: reveal?.token || '',
+      answerShown: false,
+    }, answer);
+  }
+
+  if (safeLevel === 4) {
+    const fallback = typeCoachCopy(item);
+    return protectHintAnswer({
+      level: safeLevel,
+      title: concept ? `Grammar coach · ${concept.title}` : 'Teaching hint',
+      en: concept ? concept.en : fallback.en,
+      nl: concept ? concept.nl : fallback.nl,
+      chunks: sentenceChunkCount(answer),
+      answerShown: false,
+    }, answer);
+  }
+
+  return {
+    level: safeLevel,
+    title: 'Answer, then active recall',
+    en: `Study the answer briefly, hide it, and retrieve it once: ${answer}`,
+    nl: `Bekijk het antwoord kort, verberg het en haal het daarna één keer zelf terug: ${answer}`,
+    answer,
+    translations: exercise?.translations || { nl: item.nl || '', en: item.en || '' },
+    answerShown: true,
+    requiresRecall: true,
+  };
+};
+
+export const generateConversationHint = (turn, level = 1, {
+  partialIndex = 0,
+  history = null,
+} = {}) => {
+  const suggestions = turn?.suggestions || [];
+  const suggestion = suggestions[Math.abs(Number(history?.turns || 0)) % Math.max(1, suggestions.length)] || suggestions[0] || { pl: '' };
+  const answer = suggestion.pl || '';
+  const words = wordEntries(answer);
+  const reveal = getRevealWord(answer, 'pl', partialIndex + (history?.hintsUsed || 0));
+  const revealIndexes = reveal ? [reveal.index] : [];
+  const safeLevel = clamp(Math.round(Number(level) || 1), 1, 5);
+
+  if (safeLevel === 1) {
+    return protectHintAnswer({
+      level: safeLevel,
+      title: 'Choose the intention',
+      en: `${words.length || 1} Polish word${words.length === 1 ? '' : 's'}. Start with “${words[0]?.token?.[0] || ''}” and answer the question rather than translating it word for word.`,
+      nl: `${words.length || 1} Pools${words.length === 1 ? ' woord' : 'e woorden'}. Begin met “${words[0]?.token?.[0] || ''}” en beantwoord de vraag in plaats van die woord voor woord te vertalen.`,
+      answerShown: false,
+    }, answer);
+  }
+  if (safeLevel === 2) {
+    const firstStructure = maskAnswerStructure(answer, 'pl');
+    const structure = normalizeText(firstStructure, { loose: true }) === normalizeText(answer, { loose: true })
+      ? maskEveryAnswerWord(answer)
+      : firstStructure;
+    return protectHintAnswer({ level: safeLevel, title: 'Reply frame', en: `Reply frame: ${structure}`, nl: `Antwoordpatroon: ${structure}`, structure, answerShown: false }, answer);
+  }
+  if (safeLevel === 3) {
+    const contentWords = words.filter((entry) => !functionWordsFor('pl').has(entry.normalized));
+    if (reveal && contentWords.length <= 1) {
+      const characters = [...reveal.token];
+      if (characters.length <= 1) {
+        const structure = maskAnswerStructure(answer, 'pl');
+        return protectHintAnswer({
+          level: safeLevel,
+          title: 'One key feature',
+          en: `The key word stays hidden because it is only one letter. Use its position: ${structure}`,
+          nl: `Het kernwoord blijft verborgen omdat het maar één letter is. Gebruik de positie: ${structure}`,
+          structure,
+          answerShown: false,
+        }, answer);
+      }
+      const prefixLength = characters.length <= 3 ? 1 : Math.min(2, Math.ceil(characters.length / 3));
+      const prefix = characters.slice(0, prefixLength).join('');
+      const structure = maskAnswerWithPartialWord(answer, 'pl', reveal.index, prefixLength);
+      return protectHintAnswer({
+        level: safeLevel,
+        title: 'One key element',
+        en: `The key word opens with “${prefix}”. Complete the reply: ${structure}`,
+        nl: `Het kernwoord begint met “${prefix}”. Maak het antwoord af: ${structure}`,
+        structure,
+        answerShown: false,
+      }, answer);
+    }
+    const structure = maskAnswerStructure(answer, 'pl', revealIndexes);
+    return protectHintAnswer({
+      level: safeLevel,
+      title: 'One anchor word',
+      en: `Use “${reveal?.token || words[0]?.token || ''}” as the anchor: ${structure}`,
+      nl: `Gebruik “${reveal?.token || words[0]?.token || ''}” als anker: ${structure}`,
+      structure,
+      answerShown: false,
+    }, answer);
+  }
+  if (safeLevel === 4) {
+    return protectHintAnswer({
+      level: safeLevel,
+      title: 'Conversation coach',
+      en: turn?.coach || 'Use a short natural chunk. One clear intention is enough to keep the conversation moving.',
+      nl: 'Gebruik een kort natuurlijk zinsblok. Eén duidelijke bedoeling is genoeg om het gesprek gaande te houden.',
+      answerShown: false,
+    }, answer);
+  }
+  return {
+    level: safeLevel,
+    title: 'Model reply, then respond yourself',
+    en: `A natural model reply is: ${answer}`,
+    nl: `Een natuurlijk voorbeeldantwoord is: ${answer}`,
+    answer,
+    alternatives: suggestions.map((entry) => entry.pl).filter(Boolean),
+    answerShown: true,
+    requiresRecall: true,
+  };
+};
+
+export const generateTutorExerciseHint = (exercise, level = 1, { partialIndex = 0 } = {}) => {
+  const pseudoExercise = {
+    answer: exercise?.answer || '',
+    answerKind: /[ąćęłńóśźż]/i.test(exercise?.answer || '') ? 'polish' : 'meaning',
+    type: 'typing',
+    itemType: 'grammar',
+    grammar: exercise?.grammar || [],
+    source: { itemType: 'phrase', type: 'grammar pattern', topic: 'questions' },
+    translations: {},
+  };
+  const hint = generateExerciseHint(pseudoExercise, null, level, { partialIndex, interfaceLanguage: 'en' });
+  if (level === 4 && exercise?.prompt) {
+    return {
+      ...hint,
+      title: 'Grammar coach',
+      en: `Read the frame carefully: ${exercise.prompt} Compare the form after the verb or preposition before choosing an ending.`,
+      nl: `Lees het patroon zorgvuldig: ${exercise.prompt} Vergelijk de vorm na het werkwoord of voorzetsel voordat je een uitgang kiest.`,
+    };
+  }
+  return hint;
+};
+
+export const ensureItemProgress = (state, itemId) => {
+  const defaults = {
+    reps: 0,
+    lapses: 0,
+    correct: 0,
+    incorrect: 0,
+    stability: 0.25,
+    difficulty: 5,
+    confidence: 0,
+    dueAt: new Date(0).toISOString(),
+    lastReviewedAt: null,
+    lastRating: null,
+    history: [],
+    hintsUsed: 0,
+    hintedReviews: 0,
+    maxHintLevel: 0,
+    lastHintLevel: 0,
+    hintHistory: [],
+    almostKnown: 0,
+    activeRecallRecoveries: 0,
+  };
+  state.progress.items[itemId] = {
+    ...defaults,
+    ...(state.progress.items[itemId] || {}),
+  };
+  if (!Array.isArray(state.progress.items[itemId].history)) state.progress.items[itemId].history = [];
+  if (!Array.isArray(state.progress.items[itemId].hintHistory)) state.progress.items[itemId].hintHistory = [];
   return state.progress.items[itemId];
 };
 
 export const ensureConceptProgress = (state, conceptId) => {
-  if (!state.progress.concepts[conceptId]) {
-    state.progress.concepts[conceptId] = {
-      reviews: 0,
-      mistakes: 0,
-      confidence: 0,
-      lastSeenAt: null,
-    };
-  }
+  state.progress.concepts[conceptId] = {
+    reviews: 0,
+    mistakes: 0,
+    confidence: 0,
+    lastSeenAt: null,
+    hintsUsed: 0,
+    maxHintLevel: 0,
+    almostKnown: 0,
+    ...(state.progress.concepts[conceptId] || {}),
+  };
   return state.progress.concepts[conceptId];
 };
 
 export const ensureTopicProgress = (state, topicId) => {
-  if (!state.progress.topics[topicId]) {
-    state.progress.topics[topicId] = {
-      reviews: 0,
-      correct: 0,
-      confidence: 0,
-      lastSeenAt: null,
-    };
-  }
+  state.progress.topics[topicId] = {
+    reviews: 0,
+    correct: 0,
+    confidence: 0,
+    lastSeenAt: null,
+    hintsUsed: 0,
+    maxHintLevel: 0,
+    ...(state.progress.topics[topicId] || {}),
+  };
   return state.progress.topics[topicId];
+};
+
+export const ensurePatternProgress = (state, patternId) => {
+  if (!state.progress.patterns) state.progress.patterns = {};
+  state.progress.patterns[patternId] = {
+    reviews: 0,
+    correct: 0,
+    confidence: 0,
+    lastSeenAt: null,
+    hintsUsed: 0,
+    maxHintLevel: 0,
+    almostKnown: 0,
+    ...(state.progress.patterns[patternId] || {}),
+  };
+  return state.progress.patterns[patternId];
 };
 
 export const updateStreak = (state, eventDate = new Date()) => {
@@ -206,13 +704,137 @@ export const addActivity = (state, { minutes = 0, reviews = 0, speaking = 0, con
   if (minutes > 0 || reviews > 0 || speaking > 0 || conversations > 0 || games > 0) updateStreak(state);
 };
 
+const ensureHintStats = (state) => {
+  state.stats.hintsUsed = Number(state.stats.hintsUsed || 0);
+  state.stats.hintLevelCounts = {
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+    ...(state.stats.hintLevelCounts || {}),
+  };
+  state.stats.almostKnown = Number(state.stats.almostKnown || 0);
+  state.stats.hintRecoveries = Number(state.stats.hintRecoveries || 0);
+  state.stats.activeRecallCompletions = Number(state.stats.activeRecallCompletions || 0);
+  return state.stats;
+};
+
+export const recordHintUse = (state, {
+  itemId = null,
+  level = 1,
+  exerciseType = null,
+  context = 'session',
+  conceptId = null,
+  patternId = null,
+  personaId = null,
+} = {}) => {
+  const safeLevel = clamp(Math.round(Number(level) || 1), 1, 5);
+  const stats = ensureHintStats(state);
+  stats.hintsUsed += 1;
+  stats.hintLevelCounts[safeLevel] = Number(stats.hintLevelCounts[safeLevel] || 0) + 1;
+  stats.lastHintAt = new Date().toISOString();
+
+  if (itemId && ITEM_MAP.has(itemId)) {
+    const progress = ensureItemProgress(state, itemId);
+    progress.hintsUsed += 1;
+    progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, safeLevel);
+    progress.lastHintLevel = safeLevel;
+    progress.hintHistory.push({
+      at: stats.lastHintAt,
+      level: safeLevel,
+      exerciseType,
+      context,
+    });
+    progress.hintHistory = progress.hintHistory.slice(-40);
+  }
+
+  if (conceptId) {
+    const progress = ensureConceptProgress(state, conceptId);
+    progress.hintsUsed += 1;
+    progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, safeLevel);
+  }
+
+  if (patternId) {
+    const progress = ensurePatternProgress(state, patternId);
+    progress.hintsUsed += 1;
+    progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, safeLevel);
+  }
+
+  if (personaId) {
+    if (!state.progress.personas[personaId]) {
+      state.progress.personas[personaId] = { turns: 0, averageScore: 0, lastPracticedAt: null };
+    }
+    const progress = state.progress.personas[personaId];
+    progress.hintsUsed = Number(progress.hintsUsed || 0) + 1;
+    progress.maxHintLevel = Math.max(Number(progress.maxHintLevel || 0), safeLevel);
+  }
+
+  return safeLevel;
+};
+
+export const recordAlmostKnown = (state, {
+  itemId = null,
+  conceptId = null,
+  patternId = null,
+  personaId = null,
+  context = 'session',
+} = {}) => {
+  const stats = ensureHintStats(state);
+  stats.almostKnown += 1;
+  stats.lastAlmostKnownAt = new Date().toISOString();
+
+  if (itemId && ITEM_MAP.has(itemId)) {
+    const progress = ensureItemProgress(state, itemId);
+    progress.almostKnown += 1;
+    progress.dueAt = new Date(Math.min(
+      new Date(progress.dueAt || 0).getTime() || Date.now(),
+      Date.now() + 18 * 60 * 60 * 1000,
+    )).toISOString();
+  }
+  if (conceptId) ensureConceptProgress(state, conceptId).almostKnown += 1;
+  if (patternId) ensurePatternProgress(state, patternId).almostKnown += 1;
+  if (personaId) {
+    if (!state.progress.personas[personaId]) state.progress.personas[personaId] = { turns: 0, averageScore: 0, lastPracticedAt: null };
+    state.progress.personas[personaId].almostKnown = Number(state.progress.personas[personaId].almostKnown || 0) + 1;
+  }
+  if (!state.stats.almostKnownByContext) state.stats.almostKnownByContext = {};
+  state.stats.almostKnownByContext[context] = Number(state.stats.almostKnownByContext[context] || 0) + 1;
+};
+
+export const recordPatternPractice = (state, patternId, rating, exercise = {}) => {
+  const progress = ensurePatternProgress(state, patternId);
+  const hintLevel = clamp(Math.round(Number(exercise.hintLevel) || 0), 0, 5);
+  const confidenceState = exercise.confidenceState || null;
+  const correct = exercise.correct !== false;
+  const weight = getHintEvidenceWeight(hintLevel);
+  const rawRating = clamp(Number(rating), 0, 3);
+  const target = confidenceState === 'almost'
+    ? 0.44
+    : rawRating === 0 ? 0.08 : rawRating === 1 ? 0.45 : rawRating === 2 ? 0.76 : 0.93;
+  progress.reviews += 1;
+  progress.correct += correct ? 1 : 0;
+  progress.confidence = clamp(progress.confidence * 0.78 + target * 0.22 * weight);
+  progress.lastSeenAt = new Date().toISOString();
+  progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, hintLevel);
+  if (confidenceState === 'almost') recordAlmostKnown(state, { patternId, context: 'pattern' });
+  addActivity(state, { reviews: 1 });
+  return progress;
+};
+
 export const reviewItem = (state, itemId, rating, exercise = {}) => {
   const item = ITEM_MAP.get(itemId);
   if (!item) return null;
   const progress = ensureItemProgress(state, itemId);
   const now = new Date();
   const wasNew = progress.reps === 0;
-  const numericRating = clamp(Number(rating), 0, 3);
+  const rawRating = clamp(Number(rating), 0, 3);
+  const confidenceState = exercise.confidenceState || null;
+  const numericRating = confidenceState === 'almost' ? 1 : rawRating;
+  const hintLevel = clamp(Math.round(Number(exercise.hintLevel) || 0), 0, 5);
+  const hintWeight = getHintEvidenceWeight(hintLevel);
+  const previousConfidence = progress.confidence;
+  const previousStability = progress.stability;
 
   let intervalDays;
   if (numericRating === 0) {
@@ -252,16 +874,50 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     state.stats.correct += 1;
   }
 
+  if (hintLevel >= 2) {
+    const confidenceDelta = progress.confidence - previousConfidence;
+    const stabilityDelta = progress.stability - previousStability;
+    if (confidenceDelta > 0) progress.confidence = clamp(previousConfidence + confidenceDelta * hintWeight);
+    if (stabilityDelta > 0) progress.stability = Math.max(0.08, previousStability + stabilityDelta * hintWeight);
+    intervalDays = Math.min(intervalDays * (0.55 + hintWeight * 0.45), HINT_INTERVAL_CAPS[hintLevel]);
+    progress.difficulty = clamp(progress.difficulty + (hintLevel - 1) * 0.035, 1, 10);
+  }
+
+  if (confidenceState === 'almost') {
+    progress.confidence = clamp(previousConfidence + (exercise.correct === false ? -0.015 : 0.025) * hintWeight);
+    progress.stability = Math.max(0.08, previousStability + Math.max(0, progress.stability - previousStability) * 0.45);
+    intervalDays = Math.min(intervalDays, 0.75);
+    progress.almostKnown += 1;
+    ensureHintStats(state).almostKnown += 1;
+  }
+
+  if (hintLevel > 0) {
+    progress.hintedReviews += 1;
+    progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, hintLevel);
+    progress.lastHintLevel = hintLevel;
+    if (exercise.activeRecallCompleted) {
+      progress.activeRecallRecoveries += 1;
+      const stats = ensureHintStats(state);
+      stats.activeRecallCompletions += 1;
+      if (exercise.correct !== false) stats.hintRecoveries += 1;
+    }
+  }
+
   progress.reps += 1;
   progress.lastReviewedAt = now.toISOString();
   progress.lastRating = numericRating;
   progress.dueAt = new Date(now.getTime() + intervalDays * DAY_MS).toISOString();
   progress.history.push({
     at: now.toISOString(),
-    rating: numericRating,
+    rating: rawRating,
+    effectiveRating: numericRating,
     exerciseType: exercise.type || null,
     correct: exercise.correct ?? null,
     score: exercise.score ?? null,
+    hintLevel,
+    hintsUsed: Number(exercise.hintsUsed || 0),
+    confidenceState,
+    activeRecallCompleted: Boolean(exercise.activeRecallCompleted),
   });
   progress.history = progress.history.slice(-30);
 
@@ -274,8 +930,12 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     conceptProgress.reviews += 1;
     conceptProgress.lastSeenAt = now.toISOString();
     if (numericRating === 0 || exercise.correct === false) conceptProgress.mistakes += 1;
-    const target = numericRating === 0 ? 0 : numericRating === 1 ? 0.42 : numericRating === 2 ? 0.76 : 0.94;
-    conceptProgress.confidence = clamp(conceptProgress.confidence * 0.78 + target * 0.22);
+    const target = confidenceState === 'almost'
+      ? 0.44
+      : numericRating === 0 ? 0 : numericRating === 1 ? 0.42 : numericRating === 2 ? 0.76 : 0.94;
+    conceptProgress.confidence = clamp(conceptProgress.confidence * 0.78 + target * 0.22 * hintWeight);
+    conceptProgress.maxHintLevel = Math.max(conceptProgress.maxHintLevel || 0, hintLevel);
+    if (confidenceState === 'almost') conceptProgress.almostKnown += 1;
   });
 
   if (item.topic) {
@@ -283,8 +943,11 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     topicProgress.reviews += 1;
     topicProgress.correct += numericRating >= 2 ? 1 : 0;
     topicProgress.lastSeenAt = now.toISOString();
-    const target = numericRating === 0 ? 0 : numericRating === 1 ? 0.38 : numericRating === 2 ? 0.74 : 0.92;
-    topicProgress.confidence = clamp(topicProgress.confidence * 0.8 + target * 0.2);
+    const target = confidenceState === 'almost'
+      ? 0.42
+      : numericRating === 0 ? 0 : numericRating === 1 ? 0.38 : numericRating === 2 ? 0.74 : 0.92;
+    topicProgress.confidence = clamp(topicProgress.confidence * 0.8 + target * 0.2 * hintWeight);
+    topicProgress.maxHintLevel = Math.max(topicProgress.maxHintLevel || 0, hintLevel);
   }
 
   addActivity(state, {
@@ -843,16 +1506,31 @@ export const evaluateConversationReply = (text, turn) => {
   };
 };
 
-export const recordConversationTurn = (state, personaId, score) => {
+export const recordConversationTurn = (state, personaId, score, {
+  hintLevel = 0,
+  confidenceState = null,
+  activeRecallCompleted = false,
+} = {}) => {
   if (!state.progress.personas[personaId]) {
     state.progress.personas[personaId] = { turns: 0, averageScore: 0, lastPracticedAt: null };
   }
   const progress = state.progress.personas[personaId];
+  const safeHintLevel = clamp(Math.round(Number(hintLevel) || 0), 0, 5);
+  const weightedScore = clamp(score) * getHintEvidenceWeight(safeHintLevel);
   progress.turns += 1;
-  progress.averageScore = clamp(progress.averageScore * 0.82 + clamp(score) * 0.18);
+  progress.averageScore = clamp(progress.averageScore * 0.82 + weightedScore * 0.18);
   progress.lastPracticedAt = new Date().toISOString();
+  progress.hintedTurns = Number(progress.hintedTurns || 0) + (safeHintLevel > 0 ? 1 : 0);
+  progress.maxHintLevel = Math.max(Number(progress.maxHintLevel || 0), safeHintLevel);
+  if (confidenceState === 'almost') progress.almostKnown = Number(progress.almostKnown || 0) + 1;
+  if (activeRecallCompleted) {
+    progress.activeRecallRecoveries = Number(progress.activeRecallRecoveries || 0) + 1;
+    const stats = ensureHintStats(state);
+    stats.activeRecallCompletions += 1;
+    if (clamp(score) >= 0.42) stats.hintRecoveries += 1;
+  }
   addActivity(state, { conversations: 1 });
-  recordSkillEvidence(state, 'speaking', score);
+  recordSkillEvidence(state, 'speaking', weightedScore);
 };
 
 export const getPatternSentence = (pattern, selections = {}) => {

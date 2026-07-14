@@ -1,5 +1,5 @@
-import { TUTOR_TOPICS, GRAMMAR_CONCEPTS, PHRASES, WORDS, PATTERNS } from './data.js';
-import { normalizeText, similarity, getWeakItems, getMetrics } from './engine.js';
+import { TUTOR_TOPICS, GRAMMAR_CONCEPTS, PHRASES, WORDS, PATTERNS } from './data.js?v=1.2.1';
+import { normalizeText, similarity, getWeakItems, getMetrics } from './engine.js?v=1.2.1';
 
 const STOP_WORDS = new Set([
   // English

@@ -11,7 +11,7 @@ const todayKey = () => {
 };
 
 export const createDefaultState = () => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   profile: {
     name: 'Kars',
     nativeLanguage: 'nl',
@@ -44,6 +44,7 @@ export const createDefaultState = () => ({
     concepts: {},
     topics: {},
     personas: {},
+    patterns: {},
     confusionPairs: {},
   },
   stats: {
@@ -62,11 +63,18 @@ export const createDefaultState = () => ({
     speakingAttempts: 0,
     conversationTurns: 0,
     gamesPlayed: 0,
+    hintsUsed: 0,
+    hintLevelCounts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    almostKnown: 0,
+    hintRecoveries: 0,
+    activeRecallCompletions: 0,
+    almostKnownByContext: {},
     activity: [],
   },
   tutor: {
     messages: [],
     rememberedIssues: [],
+    exerciseStates: {},
   },
   conversation: {
     selectedPersona: 'mother-in-law',
@@ -93,6 +101,55 @@ const deepMerge = (base, saved) => {
     return result;
   }
   return saved === undefined ? base : saved;
+};
+
+const migrateState = (state) => {
+  state.schemaVersion = 2;
+  state.progress = state.progress || {};
+  state.progress.items = state.progress.items || {};
+  state.progress.concepts = state.progress.concepts || {};
+  state.progress.topics = state.progress.topics || {};
+  state.progress.personas = state.progress.personas || {};
+  state.progress.patterns = state.progress.patterns || {};
+  state.progress.confusionPairs = state.progress.confusionPairs || {};
+
+  Object.values(state.progress.items).forEach((progress) => {
+    progress.history = Array.isArray(progress.history) ? progress.history : [];
+    progress.hintHistory = Array.isArray(progress.hintHistory) ? progress.hintHistory : [];
+    progress.hintsUsed = Number(progress.hintsUsed || 0);
+    progress.hintedReviews = Number(progress.hintedReviews || 0);
+    progress.maxHintLevel = Number(progress.maxHintLevel || 0);
+    progress.lastHintLevel = Number(progress.lastHintLevel || 0);
+    progress.almostKnown = Number(progress.almostKnown || 0);
+    progress.activeRecallRecoveries = Number(progress.activeRecallRecoveries || 0);
+  });
+
+  state.stats = state.stats || {};
+  state.stats.hintsUsed = Number(state.stats.hintsUsed || 0);
+  state.stats.hintLevelCounts = {
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+    ...(state.stats.hintLevelCounts || {}),
+  };
+  state.stats.almostKnown = Number(state.stats.almostKnown || 0);
+  state.stats.hintRecoveries = Number(state.stats.hintRecoveries || 0);
+  state.stats.activeRecallCompletions = Number(state.stats.activeRecallCompletions || 0);
+  state.stats.almostKnownByContext = state.stats.almostKnownByContext || {};
+
+  state.tutor = state.tutor || {};
+  state.tutor.messages = Array.isArray(state.tutor.messages) ? state.tutor.messages : [];
+  state.tutor.rememberedIssues = Array.isArray(state.tutor.rememberedIssues) ? state.tutor.rememberedIssues : [];
+  state.tutor.exerciseStates = state.tutor.exerciseStates || {};
+
+  state.conversation = state.conversation || {};
+  state.conversation.transcripts = state.conversation.transcripts || {};
+  Object.values(state.conversation.transcripts).forEach((transcript) => {
+    transcript.hintsByTurn = transcript.hintsByTurn || {};
+  });
+  return state;
 };
 
 const openDatabase = () => new Promise((resolve, reject) => {
@@ -183,7 +240,7 @@ export const loadState = async () => {
     saved = null;
   }
   if (!saved) saved = fallbackGet();
-  const state = deepMerge(defaults, saved || {});
+  const state = migrateState(deepMerge(defaults, saved || {}));
 
   const today = todayKey();
   if (state.stats.minutesDate !== today) {
@@ -262,7 +319,7 @@ export const importState = (raw) => {
   if (!parsed || parsed.app !== 'Blisko' || !parsed.state) {
     throw new Error('This does not look like a Blisko backup.');
   }
-  return deepMerge(createDefaultState(), parsed.state);
+  return migrateState(deepMerge(createDefaultState(), parsed.state));
 };
 
 export const getTodayKey = todayKey;

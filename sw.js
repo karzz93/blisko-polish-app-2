@@ -1,16 +1,16 @@
-const CACHE_NAME = 'blisko-shell-flat-v1.1.3';
+const CACHE_NAME = 'blisko-shell-flat-v1.2.1';
 const APP_SHELL = [
   './',
   './index.html',
-  './manifest.webmanifest',
-  './styles.css',
-  './data.js',
-  './storage.js',
-  './engine.js',
-  './tutor.js',
-  './app.js',
-  './icon.svg',
-  './icon-192.png',
+  './manifest.webmanifest?v=1.2.1',
+  './styles.css?v=1.2.1',
+  './data.js?v=1.2.1',
+  './storage.js?v=1.2.1',
+  './engine.js?v=1.2.1',
+  './tutor.js?v=1.2.1',
+  './app.js?v=1.2.1',
+  './icon.svg?v=1.2.1',
+  './icon-192.png?v=1.2.1',
   './icon-512.png',
   './icon-maskable-512.png'
 ];

@@ -10,7 +10,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js';
+} from './data.js?v=1.2.1';
 import {
   loadState,
   saveState,
@@ -18,7 +18,7 @@ import {
   resetState,
   exportState,
   importState,
-} from './storage.js';
+} from './storage.js?v=1.2.1';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -53,8 +53,8 @@ import {
   getHintEvidenceWeight,
   normalizeText,
   shuffle,
-} from './engine.js';
-import { localTutorReply, cloudTutorReply } from './tutor.js';
+} from './engine.js?v=1.2.1';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.2.1';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -3460,7 +3460,13 @@ const handleKeydown = (event) => {
 const registerServiceWorker = async () => {
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   try {
-    const registration = await navigator.serviceWorker.register('./sw.js');
+    const reloadKey = 'blisko-sw-reload-v1.2.1';
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (sessionStorage.getItem(reloadKey)) return;
+      sessionStorage.setItem(reloadKey, '1');
+      location.reload();
+    });
+    const registration = await navigator.serviceWorker.register('./sw.js?v=1.2.1');
     if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     registration.addEventListener('updatefound', () => {
       const worker = registration.installing;
@@ -3563,6 +3569,7 @@ const initialize = async () => {
   setupInstallPrompt();
   registerServiceWorker();
   updateConnectionStatus();
+  document.documentElement.dataset.bliskoReady = 'true';
 
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => false);
 };

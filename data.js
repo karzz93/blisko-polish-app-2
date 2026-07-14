@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.1.3';
+export const APP_VERSION = '1.2.1';
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Today', shortLabel: 'Today', icon: 'home' },
@@ -525,7 +525,7 @@ export const GRAMMAR_CONCEPTS = [
 
 export const PATTERNS = [
   {
-    id: 'pattern_go_to', title: 'Going somewhere', subtitle: 'Movement + destination', grammar: ['motion','do_genitive'],
+    id: 'pattern_go_to', topic: 'visiting', title: 'Going somewhere', subtitle: 'Movement + destination', grammar: ['motion','do_genitive'],
     template: '{motion} do {destination}.',
     default: { motion: 'Jadę', destination: 'Polski' },
     slots: {
@@ -546,7 +546,7 @@ export const PATTERNS = [
     noteEn: 'Use iść on foot and jechać with transport. A destination after do takes the genitive.',
   },
   {
-    id: 'pattern_like', title: 'Saying what you like', subtitle: 'lubię + useful object', grammar: ['case_accusative'],
+    id: 'pattern_like', topic: 'food', title: 'Saying what you like', subtitle: 'lubię + useful object', grammar: ['case_accusative'],
     template: 'Lubię {object}.',
     default: { object: 'pierogi' },
     slots: {
@@ -562,7 +562,7 @@ export const PATTERNS = [
     noteEn: 'The object after lubię is usually accusative: kawa → kawę.',
   },
   {
-    id: 'pattern_can_i', title: 'Polite initiative', subtitle: 'Ask before acting', grammar: ['modal_infinitive'],
+    id: 'pattern_can_i', topic: 'questions', title: 'Polite initiative', subtitle: 'Ask before acting', grammar: ['modal_infinitive'],
     template: 'Czy mogę {action}?',
     default: { action: 'pomóc' },
     slots: {
@@ -578,7 +578,7 @@ export const PATTERNS = [
     noteEn: 'The infinitive follows mogę, similar to “can I + verb” in English.',
   },
   {
-    id: 'pattern_interests', title: 'Talking about interests', subtitle: 'A high-value family topic', grammar: ['case_instrumental'],
+    id: 'pattern_interests', topic: 'hobbies', title: 'Talking about interests', subtitle: 'A high-value family topic', grammar: ['case_instrumental'],
     template: 'Interesuję się {interest}.',
     default: { interest: 'sportami motorowymi' },
     slots: {
@@ -594,7 +594,7 @@ export const PATTERNS = [
     noteEn: 'Learn the full frame: interesować się + instrumental.',
   },
   {
-    id: 'pattern_pain', title: 'Describing pain', subtitle: 'Useful at a doctor or pharmacy', grammar: ['body_pain_pattern'],
+    id: 'pattern_pain', topic: 'doctor', title: 'Describing pain', subtitle: 'Useful at a doctor or pharmacy', grammar: ['body_pain_pattern'],
     template: 'Boli mnie {body}.',
     default: { body: 'głowa' },
     slots: {

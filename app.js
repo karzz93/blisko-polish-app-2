@@ -44,6 +44,13 @@ import {
   addActivity,
   getPatternSentence,
   getPatternTranslation,
+  generateExerciseHint,
+  generateConversationHint,
+  generateTutorExerciseHint,
+  recordHintUse,
+  recordAlmostKnown,
+  recordPatternPractice,
+  getHintEvidenceWeight,
   normalizeText,
   shuffle,
 } from './engine.js';
@@ -573,7 +580,10 @@ function renderLearn() {
       <section>
         <div class="section-heading">
           <div><h2>Sentence pattern lab</h2><p>Swap one part at a time and feel the structure before learning the label.</p></div>
-          <button class="text-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}">Listen ${icon('volume')}</button>
+          <div class="button-row">
+            <button class="text-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}">Listen ${icon('volume')}</button>
+            <button class="secondary-button compact" type="button" data-action="practice-pattern" data-pattern="${pattern.id}">${icon('lightbulb')} Practise with hints</button>
+          </div>
         </div>
         <article class="card pattern-lab">
           <div class="pattern-list">
@@ -722,6 +732,7 @@ const ensureConversationState = (personaId) => {
     state.conversation.transcripts[personaId] = {
       turnIndex: 0,
       completed: false,
+      hintsByTurn: {},
       messages: [{
         sender: 'role',
         text: firstTurn.role,
@@ -732,15 +743,78 @@ const ensureConversationState = (personaId) => {
       }],
     };
   }
-  return state.conversation.transcripts[personaId];
+  const transcript = state.conversation.transcripts[personaId];
+  if (!transcript.hintsByTurn || typeof transcript.hintsByTurn !== 'object') transcript.hintsByTurn = {};
+  if (!Array.isArray(transcript.messages)) transcript.messages = [];
+  return transcript;
+};
+
+const ensureConversationHintState = (personaId = state.conversation.selectedPersona) => {
+  const transcript = ensureConversationState(personaId);
+  if (!transcript) return null;
+  const key = String(transcript.turnIndex || 0);
+  if (!transcript.hintsByTurn[key]) {
+    transcript.hintsByTurn[key] = {
+      level: 0,
+      stack: [],
+      partialIndex: 0,
+      recallPhase: null,
+      activeRecallCompleted: false,
+    };
+  }
+  const hintState = transcript.hintsByTurn[key];
+  if (!Array.isArray(hintState.stack)) hintState.stack = [];
+  hintState.level = clamp(Number(hintState.level || 0), 0, 5);
+  hintState.partialIndex = Number(hintState.partialIndex || 0);
+  hintState.activeRecallCompleted = Boolean(hintState.activeRecallCompleted);
+  return hintState;
+};
+
+const renderConversationHintPanel = (persona, transcript, turn) => {
+  if (transcript.completed) return '';
+  const hintState = ensureConversationHintState(persona.id);
+  if (!hintState) return '';
+  const hint = hintState.stack.at(-1);
+  const primaryCopy = hint ? (state.settings.showEnglish ? hint.en : hint.nl) : '';
+  const secondaryCopy = hint && state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const hidingModel = hintState.level === 5 && hintState.recallPhase === 'recall';
+  const studyModel = hintState.level === 5 && hintState.recallPhase === 'study';
+  return `
+    <section class="conversation-support">
+      ${hint ? `
+        <div class="progressive-hint conversation-hint level-${hint.level}" aria-live="polite">
+          <div class="hint-head">
+            <span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span>
+            <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>
+            ${renderHintMeter(hint.level)}
+          </div>
+          <p class="hint-primary">${escapeHtml(hidingModel ? 'The model reply is hidden. Answer the person in your own voice now.' : primaryCopy || '')}</p>
+          ${!hidingModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+          ${studyModel ? `
+            <div class="conversation-model-recall">
+              <strong>${escapeHtml(hint.answer || turn.suggestions?.[0]?.pl || '')}</strong>
+              <p>Read it once. Then hide it and reply without copying.</p>
+              <button class="primary-button" type="button" data-action="begin-conversation-recall">Hide model and answer ${icon('arrow')}</button>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+      <button class="progressive-hint-button conversation-hint-button level-${hintState.level}" type="button" data-action="conversation-hint" ${hintState.level >= 5 ? 'disabled' : ''}>
+        ${icon('lightbulb')}
+        <span><strong>${hintState.level >= 5 ? 'Full support used' : HINT_STEP_LABELS[Math.min(hintState.level, HINT_STEP_LABELS.length - 1)]}</strong><small>${hintState.level} / 5 · support only when needed</small></span>
+      </button>
+    </section>
+  `;
 };
 
 const renderConversationMessage = (message, persona) => {
   if (message.sender === 'correction') {
     return `
-      <div class="correction-card">
+      <div class="correction-card ${message.hintLevel ? 'hinted' : ''}">
         <strong>${message.correction ? 'Tiny correction' : 'Coach note'}</strong>
         <p>${escapeHtml(message.feedback)}${message.suggestion ? ` <b>Try:</b> ${escapeHtml(message.suggestion)}` : ''}</p>
+        ${message.hintLevel ? `<span class="correction-support-note">Hint level ${message.hintLevel}${message.activeRecallCompleted ? ' · model hidden before reply' : ''}</span>` : ''}
+        ${message.almostKnown ? `<span class="almost-recorded">${icon('brain')} Marked as almost known</span>` : `<button class="almost-inline-button" type="button" data-action="conversation-almost" data-persona="${escapeHtml(message.personaId || persona.id)}" data-message="${escapeHtml(message.id || '')}">${icon('brain')} I almost knew this</button>`}
       </div>
     `;
   }
@@ -818,18 +892,20 @@ function renderTalk() {
           </div>
 
           <div>
-            ${!transcript.completed && state.conversation.level === 'guided' ? `
-              <div class="response-suggestions">
-                ${currentTurn.suggestions.map((suggestion) => `<button class="response-chip" type="button" data-action="talk-suggestion" data-text="${escapeHtml(suggestion.pl)}">${escapeHtml(suggestion.pl)}</button>`).join('')}
-              </div>
-            ` : ''}
+            ${renderConversationHintPanel(persona, transcript, currentTurn)}
             <div class="talk-composer">
-              <div class="composer-box">
-                <button class="mic-button" type="button" data-action="conversation-mic" aria-label="Dictate in Polish">${icon('mic')}</button>
-                <textarea id="conversation-input" rows="1" placeholder="Answer in Polish… one short phrase is enough" ${transcript.completed ? 'disabled' : ''}></textarea>
-                <button class="send-button" type="button" data-action="talk-send" aria-label="Send reply" ${transcript.completed ? 'disabled' : ''}>${icon('send')}</button>
-              </div>
-              <div class="composer-helper"><span>Enter to send · Shift+Enter for a new line</span><span>${state.conversation.level === 'guided' ? 'Suggestions visible' : state.conversation.level === 'natural' ? 'Translations visible' : 'Minimal support'}</span></div>
+              ${(() => {
+                const hintState = ensureConversationHintState(persona.id);
+                const studyingModel = hintState?.level === 5 && hintState?.recallPhase === 'study';
+                return `
+                  <div class="composer-box ${studyingModel ? 'support-locked' : ''}">
+                    <button class="mic-button" type="button" data-action="conversation-mic" aria-label="Dictate in Polish" ${transcript.completed || studyingModel ? 'disabled' : ''}>${icon('mic')}</button>
+                    <textarea id="conversation-input" rows="1" placeholder="${studyingModel ? 'Hide the model reply before answering…' : 'Answer in Polish… one short phrase is enough'}" ${transcript.completed || studyingModel ? 'disabled' : ''}></textarea>
+                    <button class="send-button" type="button" data-action="talk-send" aria-label="Send reply" ${transcript.completed || studyingModel ? 'disabled' : ''}>${icon('send')}</button>
+                  </div>
+                `;
+              })()}
+              <div class="composer-helper"><span>Enter to send · Shift+Enter for a new line</span><span>${state.conversation.level === 'guided' ? 'Progressive support available' : state.conversation.level === 'natural' ? 'Translations visible · hints optional' : 'Minimal support · hints optional'}</span></div>
             </div>
           </div>
         </div>
@@ -854,7 +930,93 @@ const tutorWelcome = () => ({
   exercise: null,
 });
 
-const renderTutorReply = (reply) => `
+const ensureTutorExerciseState = (key) => {
+  if (!state.tutor.exerciseStates || typeof state.tutor.exerciseStates !== 'object') state.tutor.exerciseStates = {};
+  if (!state.tutor.exerciseStates[key]) {
+    state.tutor.exerciseStates[key] = {
+      level: 0,
+      stack: [],
+      partialIndex: 0,
+      answered: false,
+      selected: '',
+      result: null,
+      recallPhase: null,
+      recallValue: '',
+      recallResult: null,
+      activeRecallCompleted: false,
+      almostKnown: false,
+    };
+  }
+  const exerciseState = state.tutor.exerciseStates[key];
+  if (!Array.isArray(exerciseState.stack)) exerciseState.stack = [];
+  exerciseState.level = clamp(Number(exerciseState.level || 0), 0, 5);
+  return exerciseState;
+};
+
+const renderTutorExerciseHint = (exercise, key, exerciseState) => {
+  const hint = exerciseState.stack.at(-1);
+  if (!hint) return '';
+  const hideModel = exerciseState.level === 5 && exerciseState.recallPhase === 'recall';
+  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
+  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  return `
+    <div class="progressive-hint tutor-progressive-hint level-${hint.level}">
+      <div class="hint-head">
+        <span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span>
+        <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>
+        ${renderHintMeter(hint.level)}
+      </div>
+      <p class="hint-primary">${escapeHtml(hideModel ? 'The answer is hidden. Retrieve it once before checking.' : primaryCopy || '')}</p>
+      ${!hideModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+    </div>
+  `;
+};
+
+const renderTutorQuickCheck = (exercise, key) => {
+  const exerciseState = ensureTutorExerciseState(key);
+  const studyingModel = exerciseState.level === 5 && exerciseState.recallPhase === 'study';
+  const recallingModel = exerciseState.level === 5 && exerciseState.recallPhase === 'recall';
+  const result = exerciseState.result;
+  return `
+    <div class="feedback-box tutor-quick-check ${exerciseState.answered ? (result?.correct ? 'correct' : 'wrong') : ''}">
+      <div class="tutor-check-head"><div><h4>Quick check</h4><p>${escapeHtml(exercise.prompt || '')}</p></div><span class="support-badge">adaptive support</span></div>
+      ${renderTutorExerciseHint(exercise, key, exerciseState)}
+      ${studyingModel ? `
+        <div class="hint-recall-card study tutor-recall-card">
+          <span class="hint-recall-label">STUDY BRIEFLY</span>
+          <strong class="hint-answer-display">${escapeHtml(exercise.answer || '')}</strong>
+          <p>The answer will disappear. Retrieve it rather than copying it.</p>
+          <button class="primary-button" type="button" data-action="begin-tutor-recall" data-key="${escapeHtml(key)}">Hide it and recall ${icon('arrow')}</button>
+        </div>
+      ` : recallingModel && !exerciseState.answered ? `
+        <form class="answer-input-wrap hint-recall-form tutor-hint-recall-form" data-action="tutor-hint-recall-form" data-key="${escapeHtml(key)}">
+          <input class="answer-input ${exerciseState.recallResult && !exerciseState.recallResult.correct ? 'wrong' : ''}" name="answer" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" value="${escapeHtml(exerciseState.recallValue || '')}" placeholder="Type the answer from memory…">
+          <button class="primary-button" type="submit">Recall</button>
+        </form>
+        ${exerciseState.recallResult && !exerciseState.recallResult.correct ? `<div class="hint-retry-note">${escapeHtml(exerciseState.recallResult.message || 'Not yet—try the pattern once more.')}</div>` : ''}
+      ` : !exerciseState.answered ? `
+        <div class="slot-row tutor-options" style="margin:10px 0 0">
+          ${(exercise.options || []).map((option) => `<button class="slot-button" type="button" data-action="tutor-check" data-key="${escapeHtml(key)}" data-option="${escapeHtml(option)}">${escapeHtml(option)}</button>`).join('')}
+        </div>
+      ` : `
+        <div class="tutor-check-result ${result?.correct ? 'correct' : 'wrong'}">
+          <strong>${result?.correct ? 'Good retrieval' : result?.close ? 'Almost there' : 'Build it once more'}</strong>
+          <p>${escapeHtml(result?.message || '')}</p>
+          ${!result?.correct ? `<span>Answer: ${escapeHtml(exercise.answer || '')}</span>` : ''}
+          ${exerciseState.level ? `<small>Hint level ${exerciseState.level}${exerciseState.activeRecallCompleted ? ' · active recall completed' : ''}</small>` : '<small>Independent answer</small>'}
+        </div>
+        ${exerciseState.almostKnown ? `<span class="almost-recorded">${icon('brain')} Marked as almost known</span>` : `<button class="almost-inline-button" type="button" data-action="tutor-almost" data-key="${escapeHtml(key)}">${icon('brain')} I almost knew this</button>`}
+      `}
+      ${!exerciseState.answered ? `
+        <button class="progressive-hint-button tutor-hint-button level-${exerciseState.level}" type="button" data-action="tutor-hint" data-key="${escapeHtml(key)}" ${exerciseState.level >= 5 ? 'disabled' : ''}>
+          ${icon('lightbulb')}<span><strong>${exerciseState.level >= 5 ? 'Full support used' : HINT_STEP_LABELS[Math.min(exerciseState.level, HINT_STEP_LABELS.length - 1)]}</strong><small>${exerciseState.level} / 5</small></span>
+        </button>
+      ` : ''}
+    </div>
+  `;
+};
+
+const renderTutorReply = (reply, key = 'welcome') => `
   <div class="tutor-bubble">
     <h4>${escapeHtml(reply.title || 'Tutor explanation')}</h4>
     ${state.settings.showEnglish && reply.en ? `<p class="tutor-language-primary"><strong>EN</strong> ${escapeHtml(reply.en)}</p>` : ''}
@@ -866,15 +1028,7 @@ const renderTutorReply = (reply) => `
         <button class="text-button" style="margin-top:5px" type="button" data-action="speak" data-text="${escapeHtml(example[0] || '')}">${icon('volume')} Listen</button>
       </div>
     `).join('')}
-    ${reply.exercise ? `
-      <div class="feedback-box">
-        <h4>Quick check</h4>
-        <p>${escapeHtml(reply.exercise.prompt || '')}</p>
-        <div class="slot-row" style="margin:10px 0 0">
-          ${(reply.exercise.options || []).map((option) => `<button class="slot-button" type="button" data-action="tutor-check" data-answer="${escapeHtml(reply.exercise.answer || '')}" data-option="${escapeHtml(option)}">${escapeHtml(option)}</button>`).join('')}
-        </div>
-      </div>
-    ` : ''}
+    ${reply.exercise ? renderTutorQuickCheck(reply.exercise, key) : ''}
   </div>
 `;
 
@@ -902,10 +1056,10 @@ function renderTutor() {
           <span class="local-pill">${localMode ? 'LOCAL · OFFLINE' : 'AI PROXY + LOCAL FALLBACK'}</span>
         </header>
         <div class="tutor-messages" id="tutor-messages">
-          ${renderTutorReply(tutorWelcome())}
-          ${messages.map((message) => message.role === 'user'
+          ${renderTutorReply(tutorWelcome(), 'welcome')}
+          ${messages.map((message, index) => message.role === 'user'
             ? `<div class="tutor-bubble user"><p>${escapeHtml(message.text)}</p></div>`
-            : renderTutorReply(message.reply)).join('')}
+            : renderTutorReply(message.reply, message.at || `assistant-${index}`)).join('')}
         </div>
         <div class="tutor-composer">
           <div class="composer-box">
@@ -1098,6 +1252,16 @@ function renderProgress() {
     learning: learningWords / masteryTotal * 100,
     unseen: unseenWords / masteryTotal * 100,
   };
+  const reviewHistory = Object.values(state.progress.items || {}).flatMap((progress) => Array.isArray(progress.history) ? progress.history : []);
+  const evidenceReviews = reviewHistory.filter((entry) => entry.correct !== null && entry.correct !== undefined);
+  const independentCorrect = evidenceReviews.filter((entry) => entry.correct && Number(entry.hintLevel || 0) === 0).length;
+  const hintedReviews = evidenceReviews.filter((entry) => Number(entry.hintLevel || 0) > 0).length;
+  const averageHintLevel = hintedReviews
+    ? evidenceReviews.filter((entry) => Number(entry.hintLevel || 0) > 0).reduce((sum, entry) => sum + Number(entry.hintLevel || 0), 0) / hintedReviews
+    : 0;
+  const independenceRate = evidenceReviews.length ? independentCorrect / evidenceReviews.length : 0;
+  const hintLevelCounts = state.stats.hintLevelCounts || {};
+  const totalHintRequests = Math.max(1, Object.values(hintLevelCounts).reduce((sum, value) => sum + Number(value || 0), 0));
 
   return `
     <div class="view section-stack progress-page">
@@ -1171,6 +1335,23 @@ function renderProgress() {
             `).join('')}
           </div>
           <div class="snapshot-skill-note">${hasSkillEvidence ? `Next leverage point: <strong>${escapeHtml(weakestSkill.title)}</strong>. Blisko will quietly weight this skill more often in review and conversation practice.` : `Complete one short review and one speaking attempt to establish a personal skill baseline.`}</div>
+        </article>
+
+        <article class="card support-independence-card">
+          <div class="support-independence-head">
+            <div><span class="progress-overline">SUPPORT INDEPENDENCE<small lang="nl">Zelfstandig zonder hulp</small></span><h3>${evidenceReviews.length ? `${Math.round(independenceRate * 100)}% independent retrieval` : 'No hint baseline yet'}</h3><p><span>Hints are not failures. This measures how often useful Polish returns before support is needed.</span><small class="secondary-sentence" lang="nl">Hints zijn geen fouten. Dit meet hoe vaak bruikbaar Pools terugkomt vóórdat hulp nodig is.</small></p></div>
+            <div class="support-independence-score"><strong>${independentCorrect}</strong><span>independent wins</span></div>
+          </div>
+          <div class="support-independence-track"><span style="width:${Math.round(independenceRate * 100)}%"></span></div>
+          <div class="support-evidence-grid">
+            <div><strong>${hintedReviews}</strong><span>hinted reviews</span></div>
+            <div><strong>${averageHintLevel ? averageHintLevel.toFixed(1) : '—'}</strong><span>average level needed</span></div>
+            <div><strong>${state.stats.hintRecoveries || 0}</strong><span>active-recall recoveries</span></div>
+            <div><strong>${state.stats.almostKnown || 0}</strong><span>almost-known signals</span></div>
+          </div>
+          <div class="hint-level-distribution" aria-label="Hint request distribution">
+            ${[1,2,3,4,5].map((level) => `<span title="Hint ${level}: ${Number(hintLevelCounts[level] || 0)} requests"><i style="height:${Math.max(8, Number(hintLevelCounts[level] || 0) / totalHintRequests * 100)}%"></i><b>${level}</b></span>`).join('')}
+          </div>
         </article>
       </section>
 
@@ -1336,9 +1517,11 @@ function renderWordRows() {
   }).join('');
 }
 
-const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8, title = null } = {}) => {
+const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8, title = null, customExercises = null } = {}) => {
   const language = primaryLanguage();
-  const exercises = itemIds?.length
+  const exercises = customExercises?.length
+    ? customExercises
+    : itemIds?.length
     ? itemIds
       .map((id) => ITEM_MAP.get(id))
       .filter(Boolean)
@@ -1364,6 +1547,15 @@ const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8
     typedAnswer: '',
     orderSelected: [],
     recordingUrl: null,
+    hintLevel: 0,
+    hintStack: [],
+    hintPartialIndex: 0,
+    hintRecallPhase: null,
+    hintRecallValue: '',
+    hintRecallResult: null,
+    hintRecallTokens: [],
+    hintRecallOrderSelected: [],
+    hintRecallCompleted: false,
     startedAt: Date.now(),
     summarySaved: false,
   };
@@ -1371,7 +1563,145 @@ const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8
   renderSession();
 };
 
+const startPatternChallenge = (patternId = selectedPatternId) => {
+  const pattern = PATTERNS.find((entry) => entry.id === patternId) || PATTERNS[0];
+  const selections = patternSelections[pattern.id] || pattern.default;
+  const answer = getPatternSentence(pattern, selections);
+  const cleanAnswer = answer.replace(/[.!?]+$/g, '');
+  const translationNl = getPatternTranslation(pattern, selections, 'nl');
+  const translationEn = getPatternTranslation(pattern, selections, 'en');
+  const primary = primaryLanguage() === 'nl' ? translationNl : translationEn;
+  const secondary = primaryLanguage() === 'nl' ? translationEn : translationNl;
+  const tokens = cleanAnswer.split(/\s+/).filter(Boolean)
+    .map((value, index) => ({ id: `${pattern.id}-${index}-${value}`, value }));
+  const exerciseType = tokens.length >= 3 ? 'ordering' : 'typing';
+  const exercise = {
+    id: `${pattern.id}-${Date.now()}`,
+    itemId: null,
+    itemType: 'pattern',
+    patternId: pattern.id,
+    topic: pattern.topic || 'questions',
+    grammar: pattern.grammar || [],
+    source: {
+      itemType: 'phrase',
+      type: 'sentence pattern',
+      topic: pattern.topic || 'questions',
+      pl: answer,
+      nl: translationNl,
+      en: translationEn,
+      grammar: pattern.grammar || [],
+    },
+    translations: { nl: translationNl, en: translationEn },
+    type: exerciseType,
+    direction: 'meaning-to-pl',
+    answerKind: 'polish',
+    skill: 'Pattern practice',
+    instruction: 'Build the reusable pattern',
+    mainText: primary,
+    subText: secondary,
+    answer: cleanAnswer,
+    tokens: shuffle(tokens, `${pattern.id}-${Date.now()}`),
+    audioText: answer,
+  };
+  startSession({
+    mode: 'pattern',
+    title: `${pattern.title} · guided challenge`,
+    customExercises: [exercise],
+  });
+};
+
 const currentExercise = () => session?.exercises?.[session.index] || null;
+
+const HINT_STEP_LABELS = [
+  'Need a hint',
+  'Show the structure',
+  'Reveal one anchor',
+  'Explain the pattern',
+  'Show answer + recall',
+];
+
+const sessionHintButtonLabel = () => HINT_STEP_LABELS[Math.min(session?.hintLevel || 0, HINT_STEP_LABELS.length - 1)];
+
+const renderHintMeter = (level = 0) => `
+  <div class="hint-meter" aria-label="Hint level ${level} of 5">
+    ${Array.from({ length: 5 }, (_, index) => `<span class="${index < level ? 'used' : ''} ${index + 1 === level ? 'current' : ''}"></span>`).join('')}
+  </div>
+`;
+
+const renderSessionHintRecall = (exercise) => {
+  if (session.hintLevel < 5 || session.answered) return '';
+  if (session.hintRecallPhase === 'study') {
+    const hint = session.hintStack.at(-1);
+    return `
+      <div class="hint-recall-card study">
+        <span class="hint-recall-label">STUDY BRIEFLY</span>
+        <strong class="hint-answer-display">${escapeHtml(hint?.answer || exercise.answer)}</strong>
+        ${exercise.answerKind !== 'meaning' ? `<span class="hint-answer-translation">${state.settings.showEnglish ? `EN ${escapeHtml(exercise.translations?.en || '')}` : ''}${state.settings.showEnglish && state.settings.showDutch ? ' · ' : ''}${state.settings.showDutch ? `NL ${escapeHtml(exercise.translations?.nl || '')}` : ''}</span>` : ''}
+        <p>The answer will disappear. Retrieve it once before the review is saved.</p>
+        <button class="primary-button" type="button" data-action="begin-hint-recall">Hide it and recall ${icon('arrow')}</button>
+      </div>
+    `;
+  }
+
+  if (session.hintRecallPhase !== 'recall') return '';
+
+  let interaction = '';
+  if (exercise.type === 'speaking') {
+    interaction = `
+      <div class="hint-recall-speaking">
+        <button class="record-orb" type="button" data-action="complete-hint-recall-speaking" aria-label="Mark spoken recall complete">${icon('mic')}</button>
+        <strong>Say the line from memory now.</strong>
+        <p>Do not chase a perfect accent. Recover the whole speaking block once.</p>
+      </div>
+    `;
+  } else if (exercise.type === 'ordering') {
+    const selectedIds = new Set(session.hintRecallOrderSelected.map((token) => token.id));
+    interaction = `
+      <div class="order-zone hint-recall-zone" aria-label="Your recalled sentence">
+        ${session.hintRecallOrderSelected.map((token) => `<button class="word-chip" type="button" data-action="hint-order-remove" data-token="${escapeHtml(token.id)}">${escapeHtml(token.value)}</button>`).join('') || '<span class="hint-empty-copy">Rebuild the sentence without looking back.</span>'}
+      </div>
+      <div class="order-bank">
+        ${(session.hintRecallTokens || []).filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="hint-order-add" data-token="${escapeHtml(token.id)}">${escapeHtml(token.value)}</button>`).join('')}
+      </div>
+      <div class="button-row hint-recall-actions"><button class="ghost-button" type="button" data-action="show-hint-answer-again">Show once more</button><button class="primary-button" type="button" data-action="check-hint-order" ${session.hintRecallOrderSelected.length ? '' : 'disabled'}>Check recall</button></div>
+    `;
+  } else {
+    interaction = `
+      <form class="answer-input-wrap hint-recall-form" data-action="hint-recall-form">
+        <input id="hint-recall-answer" class="answer-input ${session.hintRecallResult && !session.hintRecallResult.correct ? 'wrong' : ''}" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" value="${escapeHtml(session.hintRecallValue || '')}" placeholder="${exercise.answerKind === 'meaning' ? 'Type the meaning from memory…' : 'Type the Polish from memory…'}">
+        <button class="primary-button" type="submit">Recall</button>
+      </form>
+      <div class="button-row hint-recall-actions"><button class="ghost-button" type="button" data-action="show-hint-answer-again">Show once more</button></div>
+    `;
+  }
+
+  return `
+    <div class="hint-recall-card recall">
+      <span class="hint-recall-label">ACTIVE RECALL</span>
+      ${interaction}
+      ${session.hintRecallResult && !session.hintRecallResult.correct ? `<div class="hint-retry-note">${escapeHtml(session.hintRecallResult.message || 'Not yet—compare the shape and try once more.')}</div>` : ''}
+    </div>
+  `;
+};
+
+const renderSessionHintPanel = (exercise) => {
+  if (!session.hintStack.length) return '';
+  const hint = session.hintStack.at(-1);
+  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
+  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const hideCopyForRecall = hint.level === 5 && session.hintRecallPhase === 'recall';
+  return `
+    <section class="progressive-hint level-${hint.level}" aria-live="polite">
+      <div class="hint-head">
+        <span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span>
+        <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>
+        ${renderHintMeter(hint.level)}
+      </div>
+      ${hideCopyForRecall ? `<p class="hint-primary">The model answer is hidden. Retrieve it once now.</p>` : `<p class="hint-primary">${escapeHtml(primaryCopy || '')}</p>${secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}`}
+    </section>
+    ${renderSessionHintRecall(exercise)}
+  `;
+};
 
 const renderSession = () => {
   if (!session) return;
@@ -1397,7 +1727,9 @@ const renderSession = () => {
     </div>
   `;
   hydrateStaticIcons(modalRoot);
-  if (!complete && currentExercise()?.type === 'typing' && !session.answered) {
+  if (!complete && session.hintRecallPhase === 'recall' && !session.answered) {
+    setTimeout(() => document.getElementById('hint-recall-answer')?.focus(), 30);
+  } else if (!complete && currentExercise()?.type === 'typing' && !session.answered) {
     setTimeout(() => document.getElementById('session-answer')?.focus(), 30);
   }
 };
@@ -1473,7 +1805,8 @@ const renderExercise = (exercise) => {
       <p class="exercise-prompt">${exercise.type === 'listening' ? 'Catch the message, not every sound.' : exercise.type === 'speaking' ? 'Read once, then look away if you can.' : 'Use the whole phrase as a speaking block.'}</p>
       <div class="exercise-main-text">${escapeHtml(exercise.mainText)}</div>
       ${visibleSubText ? `<div class="exercise-subtext${testsMeaning && !session.answered ? ' protected' : ''}">${escapeHtml(visibleSubText)}</div>` : '<div class="exercise-subtext empty" aria-hidden="true"></div>'}
-      ${interaction}
+      ${renderSessionHintPanel(exercise)}
+      ${session.hintLevel === 5 && !session.answered ? '' : interaction}
       ${session.answered ? renderExerciseFeedback(exercise) : ''}
     </article>
   `;
@@ -1490,6 +1823,9 @@ const renderExerciseFeedback = (exercise) => {
   const meaningReveal = testsMeaning && item
     ? `<div class="feedback-meaning"><span><strong>NL</strong> ${escapeHtml(item.nl || '')}</span><span><strong>EN</strong> ${escapeHtml(item.en || '')}</span></div>`
     : '';
+  const hintSummary = session.hintLevel
+    ? `<div class="feedback-hint-summary">${icon('lightbulb')} Hint level ${session.hintLevel} used${session.hintRecallCompleted ? ' · active recall completed' : ''}. The next interval will stay appropriately shorter.</div>`
+    : '<div class="feedback-hint-summary independent">Retrieved without support.</div>';
   return `
     <div class="feedback-box ${feedbackClass}">
       <h4>${result.correct ? 'Good retrieval' : result.close ? 'Almost there' : 'Build this memory again'}</h4>
@@ -1497,17 +1833,26 @@ const renderExerciseFeedback = (exercise) => {
       ${!result.correct || exercise.type === 'speaking' ? `<span class="feedback-answer">${escapeHtml(exercise.answer)}</span>` : ''}
       ${meaningReveal}
       ${concept ? `<p style="margin-top:7px"><strong>Why:</strong> ${escapeHtml(primaryLanguage() === 'nl' ? concept.nl : concept.en)}</p>` : ''}
+      ${hintSummary}
     </div>
   `;
 };
 
 const renderSessionFooter = () => {
   if (!session.answered) {
-    return `<div class="session-footer-inner"><span class="rating-prompt">Answer first. Then tell the coach how the memory felt.</span><button class="ghost-button" type="button" data-action="skip-exercise">Skip for now</button></div>`;
+    const hintLocked = session.hintLevel >= 5;
+    return `
+      <div class="session-footer-inner pre-answer">
+        <span class="rating-prompt">Try first, then ask for only as much support as you need.</span>
+        <button class="progressive-hint-button level-${session.hintLevel}" type="button" data-action="request-hint" ${hintLocked ? 'disabled' : ''}>${icon('lightbulb')} <span><strong>${hintLocked ? 'Full support active' : sessionHintButtonLabel()}</strong><small>${session.hintLevel} / 5 used</small></span></button>
+        <button class="ghost-button" type="button" data-action="skip-exercise">Skip for now</button>
+      </div>
+    `;
   }
   return `
-    <div class="session-footer-inner">
+    <div class="session-footer-inner rating-mode">
       <span class="rating-prompt">How did this retrieval feel?</span>
+      <button class="almost-button" type="button" data-action="rate-almost">${icon('brain')}<span><strong>I almost knew it</strong><small>review sooner</small></span></button>
       <button class="rating-button again" type="button" data-action="rate-exercise" data-rating="0"><strong>Again</strong><span>8 min</span></button>
       <button class="rating-button hard" type="button" data-action="rate-exercise" data-rating="1"><strong>Hard</strong><span>today</span></button>
       <button class="rating-button good" type="button" data-action="rate-exercise" data-rating="2"><strong>Good</strong><span>later</span></button>
@@ -1528,18 +1873,29 @@ const finalizeSession = () => {
 
 const renderSessionSummary = () => {
   const correct = session.results.filter((result) => result.correct).length;
-  const strong = session.results.filter((result) => result.rating >= 2).length;
+  const strong = session.results.filter((result) => result.rating >= 2 && (result.hintLevel || 0) <= 1).length;
   const newItems = session.results.filter((result) => result.wasNew).length;
+  const hinted = session.results.filter((result) => (result.hintLevel || 0) > 0).length;
+  const recovered = session.results.filter((result) => result.activeRecallCompleted).length;
+  const almost = session.results.filter((result) => result.confidenceState === 'almost').length;
+  const independent = session.results.filter((result) => (result.hintLevel || 0) === 0 && result.correct).length;
   const metrics = getMetrics(state);
+  const supportCopy = hinted
+    ? `${hinted} item${hinted === 1 ? '' : 's'} needed support${recovered ? `; ${recovered} were recovered through active recall` : ''}. ${almost ? `${almost} “almost knew it” signal${almost === 1 ? '' : 's'} will bring material back sooner.` : 'Future reviews will reduce the support gradually.'}`
+    : `All ${independent} correct retrieval${independent === 1 ? '' : 's'} were independent. That is the strongest evidence the coach can collect.`;
   return `
     <section class="session-summary">
       <div class="summary-icon">✓</div>
       <h2>Dobra robota, ${escapeHtml(state.profile.name)}.</h2>
-      <p>The coach has already changed future intervals and noted where a new sentence context is needed.</p>
+      <p>The coach has already changed future intervals and noted how much support each memory needed.</p>
       <div class="summary-grid">
         <div class="summary-stat"><strong>${correct}/${session.exercises.length}</strong><span>retrieved correctly</span></div>
-        <div class="summary-stat"><strong>${strong}</strong><span>stable memories</span></div>
+        <div class="summary-stat"><strong>${strong}</strong><span>strong without heavy hints</span></div>
         <div class="summary-stat"><strong>${session.minutes || 0} min</strong><span>focused practice</span></div>
+      </div>
+      <div class="hint-session-recap ${hinted ? 'supported' : 'independent'}">
+        <span>${icon(hinted ? 'lightbulb' : 'brain')}</span>
+        <div><strong>${hinted ? 'Support became evidence' : 'Independent retrieval'}</strong><p>${escapeHtml(supportCopy)}</p></div>
       </div>
       <div class="feedback-box correct" style="text-align:left;margin-bottom:20px">
         <h4>What changed</h4>
@@ -1561,6 +1917,119 @@ const resetExerciseState = () => {
   session.typedAnswer = '';
   session.orderSelected = [];
   session.recordingUrl = null;
+  session.hintLevel = 0;
+  session.hintStack = [];
+  session.hintPartialIndex = 0;
+  session.hintRecallPhase = null;
+  session.hintRecallValue = '';
+  session.hintRecallResult = null;
+  session.hintRecallTokens = [];
+  session.hintRecallOrderSelected = [];
+  session.hintRecallCompleted = false;
+};
+
+const requestSessionHint = () => {
+  if (!session || session.answered || session.hintLevel >= 5) return;
+  const exercise = currentExercise();
+  if (!exercise) return;
+  const nextLevel = session.hintLevel + 1;
+  const progress = exercise.itemId ? state.progress.items[exercise.itemId] : null;
+  const hint = generateExerciseHint(exercise, progress, nextLevel, {
+    partialIndex: session.hintPartialIndex,
+    interfaceLanguage: 'en',
+  });
+  session.hintLevel = nextLevel;
+  session.hintStack.push(hint);
+  if (nextLevel === 3) session.hintPartialIndex += 1;
+  if (nextLevel === 5) {
+    session.hintRecallPhase = 'study';
+    session.hintRecallCompleted = false;
+    session.hintRecallResult = null;
+  }
+  recordHintUse(state, {
+    itemId: exercise.itemId,
+    level: nextLevel,
+    exerciseType: exercise.type,
+    context: session.mode === 'review' ? 'review' : 'session',
+    conceptId: exercise.grammar?.[0] || null,
+    patternId: exercise.patternId || null,
+  });
+  save();
+  haptic(6);
+  renderSession();
+};
+
+const beginSessionHintRecall = () => {
+  if (!session || session.hintLevel < 5 || session.answered) return;
+  const exercise = currentExercise();
+  const cleanAnswer = String(exercise?.answer || '').replace(/[.!?]+$/g, '').trim();
+  session.hintRecallPhase = 'recall';
+  session.hintRecallValue = '';
+  session.hintRecallResult = null;
+  session.hintRecallOrderSelected = [];
+  session.hintRecallTokens = shuffle(
+    cleanAnswer.split(/\s+/).filter(Boolean).map((value, index) => ({ id: `hint-${index}-${value}`, value })),
+    `${exercise?.id || 'hint'}-active-recall`,
+  );
+  renderSession();
+};
+
+const showSessionHintAnswerAgain = () => {
+  if (!session || session.hintLevel < 5 || session.answered) return;
+  session.hintRecallPhase = 'study';
+  session.hintRecallValue = '';
+  session.hintRecallResult = null;
+  session.hintRecallOrderSelected = [];
+  renderSession();
+};
+
+const completeSessionHintRecall = (result, { speaking = false } = {}) => {
+  if (!session || session.answered) return;
+  const accepted = speaking || result.correct || result.close;
+  if (!accepted) {
+    session.hintRecallResult = result;
+    renderSession();
+    return;
+  }
+  session.hintRecallCompleted = true;
+  session.hintRecallPhase = 'complete';
+  session.answerResult = {
+    ...result,
+    correct: true,
+    close: !speaking && !result.correct,
+    score: speaking ? 0.64 : Math.max(result.score || 0, result.correct ? 0.82 : 0.7),
+    message: speaking
+      ? 'Recovered aloud after full support. This will return soon for a more independent attempt.'
+      : result.correct
+        ? 'Recovered after full support. The coach will schedule a shorter interval so it becomes independent.'
+        : 'Close enough for the recovery step. The item will return soon so the ending becomes automatic.',
+  };
+  session.answered = true;
+  haptic(10);
+  renderSession();
+};
+
+const checkSessionHintRecall = () => {
+  if (!session || session.answered || session.hintRecallPhase !== 'recall') return;
+  const input = document.getElementById('hint-recall-answer');
+  const value = input?.value?.trim() || '';
+  if (!value) {
+    showToast('Retrieve something first', 'Even an imperfect attempt strengthens the active-recall step.', 'lightbulb');
+    return;
+  }
+  session.hintRecallValue = value;
+  completeSessionHintRecall(evaluateAnswer(value, currentExercise().answer));
+};
+
+const checkSessionHintOrder = () => {
+  if (!session || session.answered || session.hintRecallPhase !== 'recall') return;
+  const value = session.hintRecallOrderSelected.map((token) => token.value).join(' ');
+  if (!value) return;
+  completeSessionHintRecall(evaluateAnswer(value, currentExercise().answer));
+};
+
+const completeSessionHintRecallSpeaking = () => {
+  completeSessionHintRecall({ correct: true, close: false, score: 0.64 }, { speaking: true });
 };
 
 const answerChoice = (option) => {
@@ -1649,33 +2118,55 @@ const startLocalRecording = async () => {
   }
 };
 
-const rateCurrentExercise = (rating) => {
+const rateCurrentExercise = (rating, confidenceState = null) => {
   if (!session || !session.answered) return;
   const exercise = currentExercise();
-  const itemProgressBefore = state.progress.items[exercise.itemId];
+  const itemProgressBefore = exercise.itemId ? state.progress.items[exercise.itemId] : null;
+  const patternProgressBefore = exercise.patternId ? state.progress.patterns?.[exercise.patternId] : null;
   const result = session.answerResult || { correct: true, score: 0.7 };
-  reviewItem(state, exercise.itemId, rating, {
+  const reviewEvidence = {
     type: exercise.type,
     correct: result.correct,
     score: result.score,
-  });
-  if (exercise.type === 'listening') recordSkillEvidence(state, 'listening', result.correct ? Math.max(0.65, result.score || 0.8) : result.score || 0.2);
-  if (exercise.type === 'speaking') recordSkillEvidence(state, 'speaking', rating / 3);
-  if (exercise.type === 'typing' || exercise.type === 'ordering') recordSkillEvidence(state, 'grammar', result.correct ? result.score || 0.8 : result.score || 0.2);
-  recordSkillEvidence(state, 'reading', result.correct ? 0.8 : 0.3);
+    hintLevel: session.hintLevel,
+    hintsUsed: session.hintStack.length,
+    activeRecallCompleted: session.hintRecallCompleted,
+    confidenceState,
+  };
+  if (exercise.itemId) reviewItem(state, exercise.itemId, rating, reviewEvidence);
+  else if (exercise.patternId) {
+    recordPatternPractice(state, exercise.patternId, rating, reviewEvidence);
+    if (session.hintRecallCompleted) {
+      state.stats.activeRecallCompletions = Number(state.stats.activeRecallCompletions || 0) + 1;
+      if (result.correct) state.stats.hintRecoveries = Number(state.stats.hintRecoveries || 0) + 1;
+    }
+  }
+
+  const evidenceWeight = getHintEvidenceWeight(session.hintLevel);
+  const almostWeight = confidenceState === 'almost' ? 0.62 : 1;
+  if (exercise.type === 'listening') recordSkillEvidence(state, 'listening', (result.correct ? Math.max(0.65, result.score || 0.8) : result.score || 0.2) * evidenceWeight * almostWeight);
+  if (exercise.type === 'speaking') recordSkillEvidence(state, 'speaking', (confidenceState === 'almost' ? 0.46 : Number(rating) / 3) * evidenceWeight);
+  if (exercise.type === 'typing' || exercise.type === 'ordering') recordSkillEvidence(state, 'grammar', (result.correct ? result.score || 0.8 : result.score || 0.2) * evidenceWeight * almostWeight);
+  recordSkillEvidence(state, 'reading', (result.correct ? 0.8 : 0.3) * evidenceWeight * almostWeight);
 
   session.results.push({
     itemId: exercise.itemId,
+    patternId: exercise.patternId || null,
     correct: Boolean(result.correct),
     rating: Number(rating),
-    wasNew: !itemProgressBefore,
+    confidenceState,
+    hintLevel: session.hintLevel,
+    activeRecallCompleted: session.hintRecallCompleted,
+    wasNew: exercise.itemId ? !itemProgressBefore : !patternProgressBefore,
   });
-  if (result.correct) session.score += Number(rating) + 1;
+  if (result.correct) session.score += Math.max(1, Math.round((Number(rating) + 1) * evidenceWeight));
   session.index += 1;
   resetExerciseState();
   save();
   renderSession();
 };
+
+const rateCurrentExerciseAlmost = () => rateCurrentExercise(1, 'almost');
 
 const skipCurrentExercise = () => {
   if (!session) return;
@@ -1734,6 +2225,14 @@ const openGame = (gameId) => {
       score: 0,
       answered: false,
       selected: null,
+      result: null,
+      hintLevel: 0,
+      hintStack: [],
+      hintPartialIndex: 0,
+      hintRecallPhase: null,
+      hintRecallValue: '',
+      hintRecallResult: null,
+      activeRecallCompleted: false,
       finished: false,
       startedAt: Date.now(),
     };
@@ -1749,6 +2248,12 @@ const openGame = (gameId) => {
       matchedPairs: 0,
       moves: 0,
       locked: false,
+      hintLevel: 0,
+      hintStack: [],
+      hintTargetPairId: null,
+      hintRecallPhase: null,
+      hintActiveRecallCompleted: false,
+      lastMatch: null,
       finished: false,
       startedAt: Date.now(),
     };
@@ -1770,6 +2275,125 @@ const renderGameModal = () => {
   `, { wide: true, label: gameInfo?.title || 'Mini game' });
 };
 
+const rapidExerciseForItem = (item) => ({
+  id: `rapid-${item.id}`,
+  itemId: item.id,
+  itemType: 'word',
+  type: 'choice',
+  answerKind: 'meaning',
+  skill: 'Rapid vocabulary',
+  answer: primaryTranslation(item),
+  source: { ...item, itemType: 'word' },
+  translations: { nl: item.nl || '', en: item.en || '' },
+  grammar: item.grammar || [],
+});
+
+const resetRapidHintState = () => {
+  if (!activeGame || activeGame.type !== 'rapid') return;
+  activeGame.hintLevel = 0;
+  activeGame.hintStack = [];
+  activeGame.hintPartialIndex = 0;
+  activeGame.hintRecallPhase = null;
+  activeGame.hintRecallValue = '';
+  activeGame.hintRecallResult = null;
+  activeGame.activeRecallCompleted = false;
+};
+
+const renderRapidHintPanel = (item) => {
+  const hint = activeGame.hintStack?.at(-1);
+  if (!hint) return '';
+  const hideModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'recall';
+  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
+  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  return `
+    <div class="progressive-hint game-progressive-hint level-${hint.level}">
+      <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>${renderHintMeter(hint.level)}</div>
+      <p class="hint-primary">${escapeHtml(hideModel ? 'The meaning is hidden. Type it from memory before continuing.' : primaryCopy || '')}</p>
+      ${!hideModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+    </div>
+  `;
+};
+
+const maskGameText = (value = '', keepFirst = false) => String(value).split(/(\s+)/).map((part) => {
+  if (/^\s+$/.test(part)) return part;
+  const letters = [...part];
+  if (!letters.length) return part;
+  return `${keepFirst ? letters[0] : ''}${'_'.repeat(Math.max(2, letters.length - (keepFirst ? 1 : 0)))}`;
+}).join('');
+
+const getMatchingHintTarget = () => {
+  if (!activeGame || activeGame.type === 'rapid') return null;
+  const unmatchedPairIds = [...new Set(activeGame.tiles.filter((tile) => !tile.matched).map((tile) => tile.pairId))];
+  if (!unmatchedPairIds.length) return null;
+  if (!activeGame.hintTargetPairId || !unmatchedPairIds.includes(activeGame.hintTargetPairId)) {
+    activeGame.hintTargetPairId = unmatchedPairIds
+      .slice()
+      .sort((left, right) => (state.progress.items[left]?.confidence || 0) - (state.progress.items[right]?.confidence || 0))[0];
+  }
+  return ITEM_MAP.get(activeGame.hintTargetPairId) || null;
+};
+
+const buildMatchingHint = (item, level) => {
+  const meaning = primaryTranslation(item);
+  const secondary = secondaryTranslation(item);
+  const firstPl = [...String(item.pl || '')][0] || '';
+  const firstMeaning = [...String(meaning || '')][0] || '';
+  if (level === 1) return {
+    level, title: 'Gentle nudge',
+    en: `Look for a ${item.type || 'word'} pair. The Polish side begins with “${firstPl}”; the meaning begins with “${firstMeaning}”.`,
+    nl: `Zoek een paar met een ${item.type || 'woord'}. De Poolse kant begint met “${firstPl}”; de betekenis met “${firstMeaning}”.`,
+  };
+  if (level === 2) return {
+    level, title: 'Pair structure',
+    en: `Match this shape: ${maskGameText(item.pl, true)} ↔ ${maskGameText(meaning, true)}`,
+    nl: `Koppel deze vorm: ${maskGameText(item.pl, true)} ↔ ${maskGameText(meaning, true)}`,
+  };
+  if (level === 3) return {
+    level, title: 'One anchor card',
+    en: `The Polish anchor is “${item.pl}”. Find its meaning without revealing the pair yet.`,
+    nl: `Het Poolse anker is “${item.pl}”. Zoek de betekenis zonder het hele paar al te tonen.`,
+  };
+  if (level === 4) return {
+    level, title: 'Meaning in context',
+    en: `${item.example ? `Picture the line “${item.example}”. ` : ''}Use the word as a ${item.type || 'conversation word'}, not as an isolated translation.`,
+    nl: `${item.example ? `Denk aan de zin “${item.example}”. ` : ''}Gebruik het als ${item.type || 'gesprekswoord'}, niet als losse vertaling.`,
+  };
+  return {
+    level, title: 'Pair, then active recall',
+    en: `Study the pair briefly: ${item.pl} ↔ ${meaning}`,
+    nl: `Bekijk het paar kort: ${item.pl} ↔ ${meaning}${secondary ? ` (${secondary})` : ''}`,
+    answer: `${item.pl} ↔ ${meaning}`,
+    requiresRecall: true,
+  };
+};
+
+const resetMatchingHintState = () => {
+  if (!activeGame || activeGame.type === 'rapid') return;
+  activeGame.hintLevel = 0;
+  activeGame.hintStack = [];
+  activeGame.hintTargetPairId = null;
+  activeGame.hintRecallPhase = null;
+  activeGame.hintActiveRecallCompleted = false;
+};
+
+const renderMatchingHintPanel = () => {
+  const item = getMatchingHintTarget();
+  const hint = activeGame.hintStack?.at(-1);
+  if (!item || !hint) return '';
+  const hideModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'recall';
+  const studyModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'study';
+  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
+  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  return `
+    <div class="progressive-hint game-progressive-hint level-${hint.level}">
+      <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>${renderHintMeter(hint.level)}</div>
+      <p class="hint-primary">${escapeHtml(hideModel ? 'The pair is hidden again. Find both cards now.' : primaryCopy || '')}</p>
+      ${!hideModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+      ${studyModel ? `<div class="conversation-model-recall"><strong>${escapeHtml(hint.answer || '')}</strong><p>Hide it before selecting the cards.</p><button class="primary-button" type="button" data-action="begin-matching-recall">Hide pair and find it ${icon('arrow')}</button></div>` : ''}
+    </div>
+  `;
+};
+
 const renderMatchingGame = () => {
   if (activeGame.finished) {
     const label = activeGame.type === 'memory' ? 'memory pairs' : 'meaning pairs';
@@ -1777,25 +2401,34 @@ const renderMatchingGame = () => {
       <section class="session-summary" style="margin:auto">
         <div class="summary-icon">✓</div>
         <h2>All ${label} found.</h2>
-        <p>${activeGame.moves} moves gave the coach evidence about what your brain links automatically.</p>
+        <p>${activeGame.moves} moves gave the coach evidence about what your brain links automatically, including where support was needed.</p>
         <div class="button-row" style="justify-content:center"><button class="primary-button" type="button" data-action="finish-game">Done</button><button class="secondary-button" type="button" data-action="restart-game" data-game="${activeGame.type}">Play again</button></div>
       </section>
     `;
   }
+  const studyingPair = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'study';
   return `
     <div>
       <div class="section-heading"><div><h3>${activeGame.matchedPairs} / ${activeGame.tiles.length / 2} pairs</h3><p>${activeGame.type === 'memory' ? 'Reveal two cards and connect Polish to meaning.' : 'Select one Polish tile and one meaning tile.'}</p></div><span class="soft-pill" style="padding:6px 9px;background:var(--green-soft);color:var(--green);font-size:9px">${activeGame.moves} moves</span></div>
-      <div class="match-grid">
+      ${renderMatchingHintPanel()}
+      ${activeGame.lastMatch ? `
+        <div class="game-match-feedback">
+          <span>${icon('check')} ${escapeHtml(ITEM_MAP.get(activeGame.lastMatch.pairId)?.pl || 'Pair')} connected</span>
+          ${activeGame.lastMatch.almostKnown ? `<small>${icon('brain')} almost-known signal saved</small>` : `<button type="button" data-action="game-almost" data-pair="${escapeHtml(activeGame.lastMatch.pairId)}">${icon('brain')} I almost knew this</button>`}
+        </div>
+      ` : ''}
+      <div class="match-grid ${studyingPair ? 'support-locked' : ''}">
         ${activeGame.tiles.map((tile) => {
           const selected = activeGame.selectedIds.includes(tile.id);
           const visible = tile.revealed || selected || tile.matched;
           return `
-            <button class="match-tile ${selected ? 'selected' : ''} ${tile.matched ? 'matched' : ''}" type="button" data-action="game-tile" data-tile="${tile.id}" ${tile.matched || activeGame.locked ? 'disabled' : ''}>
+            <button class="match-tile ${selected ? 'selected' : ''} ${tile.matched ? 'matched' : ''}" type="button" data-action="game-tile" data-tile="${tile.id}" ${tile.matched || activeGame.locked || studyingPair ? 'disabled' : ''}>
               ${visible ? escapeHtml(tile.text) : '• • •'}
             </button>
           `;
         }).join('')}
       </div>
+      <button class="progressive-hint-button game-hint-button level-${activeGame.hintLevel || 0}" type="button" data-action="matching-hint" ${(activeGame.hintLevel || 0) >= 5 ? 'disabled' : ''}>${icon('lightbulb')}<span><strong>${(activeGame.hintLevel || 0) >= 5 ? 'Full support used' : HINT_STEP_LABELS[Math.min(activeGame.hintLevel || 0, HINT_STEP_LABELS.length - 1)]}</strong><small>${activeGame.hintLevel || 0} / 5 · targets your weakest remaining pair</small></span></button>
     </div>
   `;
 };
@@ -1816,31 +2449,98 @@ const renderRapidGame = () => {
       <section class="session-summary" style="margin:auto">
         <div class="summary-icon">⚡</div>
         <h2>${activeGame.score} / ${activeGame.items.length} at speed.</h2>
-        <p>Speed is only useful after meaning. Missed items were moved closer in the adaptive queue.</p>
+        <p>Speed is only useful after meaning. Missed and heavily hinted items were moved closer in the adaptive queue.</p>
         <div class="button-row" style="justify-content:center"><button class="primary-button" type="button" data-action="finish-game">Done</button><button class="secondary-button" type="button" data-action="restart-game" data-game="rapid">Again</button></div>
       </section>
     `;
   }
   const item = activeGame.items[activeGame.index];
   const options = rapidOptions(item);
+  const studyingModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'study';
+  const recallingModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'recall';
   return `
     <div>
       <div class="rapid-timer"><span style="--time:${100 - activeGame.index / activeGame.items.length * 100}%"></span></div>
       <div class="rapid-card"><strong>${escapeHtml(item.pl)}</strong><span>${escapeHtml(item.type)} · ${activeGame.index + 1} / ${activeGame.items.length}</span><button class="text-button" type="button" data-action="speak" data-text="${escapeHtml(item.pl)}">${icon('volume')} Listen</button></div>
-      <div class="answer-options" style="margin-top:13px">
-        ${options.map((option, index) => {
-          const correct = normalizeText(option, { loose: true }) === normalizeText(primaryTranslation(item), { loose: true });
-          const selected = activeGame.selected === option;
-          const className = activeGame.answered ? correct ? 'correct' : selected ? 'wrong' : '' : '';
-          return `<button class="answer-option ${className}" type="button" data-action="rapid-answer" data-option="${escapeHtml(option)}" ${activeGame.answered ? 'disabled' : ''}><span class="option-letter">${String.fromCharCode(65 + index)}</span><strong>${escapeHtml(option)}</strong></button>`;
-        }).join('')}
-      </div>
+      ${renderRapidHintPanel(item)}
+      ${studyingModel ? `
+        <div class="hint-recall-card study game-recall-card">
+          <span class="hint-recall-label">STUDY BRIEFLY</span>
+          <strong class="hint-answer-display">${escapeHtml(primaryTranslation(item))}</strong>
+          <p>The meaning will disappear. Type it once from memory.</p>
+          <button class="primary-button" type="button" data-action="begin-rapid-recall">Hide it and recall ${icon('arrow')}</button>
+        </div>
+      ` : recallingModel && !activeGame.answered ? `
+        <form class="answer-input-wrap hint-recall-form rapid-hint-recall-form" data-action="rapid-hint-recall-form">
+          <input class="answer-input ${activeGame.hintRecallResult && !activeGame.hintRecallResult.correct ? 'wrong' : ''}" name="answer" type="text" autocomplete="off" value="${escapeHtml(activeGame.hintRecallValue || '')}" placeholder="Type the meaning from memory…">
+          <button class="primary-button" type="submit">Recall</button>
+        </form>
+        ${activeGame.hintRecallResult && !activeGame.hintRecallResult.correct ? `<div class="hint-retry-note">${escapeHtml(activeGame.hintRecallResult.message || 'Not yet—try once more.')}</div>` : ''}
+      ` : `
+        <div class="answer-options" style="margin-top:13px">
+          ${options.map((option, index) => {
+            const correct = normalizeText(option, { loose: true }) === normalizeText(primaryTranslation(item), { loose: true });
+            const selected = activeGame.selected === option;
+            const className = activeGame.answered ? correct ? 'correct' : selected ? 'wrong' : '' : '';
+            return `<button class="answer-option ${className}" type="button" data-action="rapid-answer" data-option="${escapeHtml(option)}" ${activeGame.answered ? 'disabled' : ''}><span class="option-letter">${String.fromCharCode(65 + index)}</span><strong>${escapeHtml(option)}</strong></button>`;
+          }).join('')}
+        </div>
+      `}
+      ${activeGame.answered ? `
+        <div class="game-answer-footer">
+          <div class="game-answer-result ${activeGame.result?.correct ? 'correct' : 'wrong'}"><strong>${activeGame.result?.correct ? 'Good retrieval' : 'Not yet'}</strong><span>${activeGame.hintLevel ? `Hint level ${activeGame.hintLevel}${activeGame.activeRecallCompleted ? ' · active recall completed' : ''}` : 'Independent attempt'}</span></div>
+          <div class="button-row"><button class="almost-button compact" type="button" data-action="rapid-almost">${icon('brain')}<span><strong>I almost knew it</strong><small>bring it back sooner</small></span></button><button class="primary-button" type="button" data-action="rapid-next">${activeGame.index + 1 >= activeGame.items.length ? 'Finish' : 'Next word'} ${icon('arrow')}</button></div>
+        </div>
+      ` : `
+        <button class="progressive-hint-button game-hint-button level-${activeGame.hintLevel || 0}" type="button" data-action="rapid-hint" ${(activeGame.hintLevel || 0) >= 5 ? 'disabled' : ''}>${icon('lightbulb')}<span><strong>${(activeGame.hintLevel || 0) >= 5 ? 'Full support used' : HINT_STEP_LABELS[Math.min(activeGame.hintLevel || 0, HINT_STEP_LABELS.length - 1)]}</strong><small>${activeGame.hintLevel || 0} / 5</small></span></button>
+      `}
     </div>
   `;
 };
 
+const requestMatchingHint = () => {
+  if (!activeGame || activeGame.type === 'rapid' || activeGame.finished || activeGame.hintLevel >= 5) return;
+  const item = getMatchingHintTarget();
+  if (!item) return;
+  const nextLevel = (activeGame.hintLevel || 0) + 1;
+  const hint = buildMatchingHint(item, nextLevel);
+  activeGame.hintLevel = nextLevel;
+  activeGame.hintStack.push(hint);
+  if (nextLevel === 5) {
+    activeGame.hintRecallPhase = 'study';
+    activeGame.hintActiveRecallCompleted = false;
+  }
+  recordHintUse(state, {
+    itemId: item.id,
+    level: nextLevel,
+    exerciseType: activeGame.type,
+    context: 'game',
+    conceptId: item.grammar?.[0] || null,
+  });
+  save();
+  haptic(6);
+  renderGameModal();
+};
+
+const beginMatchingHintRecall = () => {
+  if (!activeGame || activeGame.type === 'rapid' || activeGame.hintLevel < 5) return;
+  activeGame.hintRecallPhase = 'recall';
+  activeGame.hintActiveRecallCompleted = false;
+  renderGameModal();
+};
+
+const markGameAlmostKnown = (pairId) => {
+  if (!activeGame?.lastMatch || activeGame.lastMatch.pairId !== pairId || activeGame.lastMatch.almostKnown) return;
+  activeGame.lastMatch.almostKnown = true;
+  recordAlmostKnown(state, { itemId: pairId, context: 'game' });
+  save();
+  showToast('Marked as almost known', 'This pair will return sooner without erasing the success.', 'brain');
+  renderGameModal();
+};
+
 const handleGameTile = (tileId) => {
   if (!activeGame || activeGame.locked || activeGame.finished) return;
+  if (activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'study') return;
   const tile = activeGame.tiles.find((entry) => entry.id === tileId);
   if (!tile || tile.matched || activeGame.selectedIds.includes(tileId)) return;
   tile.revealed = true;
@@ -1864,7 +2564,20 @@ const handleGameTile = (tileId) => {
       first.matched = true;
       second.matched = true;
       activeGame.matchedPairs += 1;
-      reviewItem(state, first.pairId, 2, { type: 'game', correct: true, score: 1 });
+      const targetMatched = first.pairId === activeGame.hintTargetPairId;
+      const hintLevel = targetMatched ? Number(activeGame.hintLevel || 0) : 0;
+      const activeRecallCompleted = targetMatched && hintLevel === 5 && activeGame.hintRecallPhase === 'recall';
+      if (activeRecallCompleted) activeGame.hintActiveRecallCompleted = true;
+      reviewItem(state, first.pairId, 2, {
+        type: activeGame.type,
+        correct: true,
+        score: 1,
+        hintLevel,
+        hintsUsed: targetMatched ? activeGame.hintStack.length : 0,
+        activeRecallCompleted,
+      });
+      activeGame.lastMatch = { pairId: first.pairId, almostKnown: false };
+      if (targetMatched) resetMatchingHintState();
       haptic(10);
     } else {
       if (activeGame.type === 'memory') {
@@ -1880,34 +2593,101 @@ const handleGameTile = (tileId) => {
     if (activeGame.matchedPairs === activeGame.tiles.length / 2) {
       activeGame.finished = true;
       addActivity(state, { games: 1, minutes: Math.max(2, Math.round((Date.now() - activeGame.startedAt) / 60_000)) });
-      save();
     }
+    save();
     renderGameModal();
   }, match ? 280 : 720);
 };
 
-const handleRapidAnswer = (option) => {
+const requestRapidHint = () => {
+  if (!activeGame || activeGame.type !== 'rapid' || activeGame.finished || activeGame.answered || activeGame.hintLevel >= 5) return;
+  const item = activeGame.items[activeGame.index];
+  const exercise = rapidExerciseForItem(item);
+  const nextLevel = (activeGame.hintLevel || 0) + 1;
+  const hint = generateExerciseHint(exercise, state.progress.items[item.id] || null, nextLevel, {
+    partialIndex: activeGame.hintPartialIndex || 0,
+    interfaceLanguage: primaryLanguage(),
+  });
+  activeGame.hintLevel = nextLevel;
+  activeGame.hintStack.push(hint);
+  if (nextLevel === 3) activeGame.hintPartialIndex += 1;
+  if (nextLevel === 5) {
+    activeGame.hintRecallPhase = 'study';
+    activeGame.activeRecallCompleted = false;
+  }
+  recordHintUse(state, {
+    itemId: item.id,
+    level: nextLevel,
+    exerciseType: 'rapid',
+    context: 'game',
+    conceptId: item.grammar?.[0] || null,
+  });
+  save();
+  haptic(6);
+  renderGameModal();
+};
+
+const beginRapidHintRecall = () => {
+  if (!activeGame || activeGame.type !== 'rapid' || activeGame.hintLevel < 5 || activeGame.answered) return;
+  activeGame.hintRecallPhase = 'recall';
+  activeGame.hintRecallValue = '';
+  activeGame.hintRecallResult = null;
+  renderGameModal();
+  setTimeout(() => modalRoot.querySelector('.rapid-hint-recall-form input')?.focus(), 30);
+};
+
+const completeRapidAnswer = (value, { activeRecall = false } = {}) => {
   if (!activeGame || activeGame.type !== 'rapid' || activeGame.answered) return;
   const item = activeGame.items[activeGame.index];
-  const correct = normalizeText(option, { loose: true }) === normalizeText(primaryTranslation(item), { loose: true });
-  activeGame.answered = true;
-  activeGame.selected = option;
-  if (correct) activeGame.score += 1;
-  reviewItem(state, item.id, correct ? 2 : 0, { type: 'rapid', correct, score: correct ? 1 : 0 });
-  haptic(correct ? 8 : [18, 30, 18]);
-  renderGameModal();
-  setTimeout(() => {
-    if (!activeGame || activeGame.type !== 'rapid') return;
-    activeGame.index += 1;
-    activeGame.answered = false;
-    activeGame.selected = null;
-    if (activeGame.index >= activeGame.items.length) {
-      activeGame.finished = true;
-      addActivity(state, { games: 1, minutes: Math.max(2, Math.round((Date.now() - activeGame.startedAt) / 60_000)) });
-      save();
-    }
+  const result = evaluateAnswer(value, primaryTranslation(item));
+  if (activeRecall && !result.correct && !result.close) {
+    activeGame.hintRecallValue = String(value || '');
+    activeGame.hintRecallResult = result;
     renderGameModal();
-  }, 620);
+    return;
+  }
+  activeGame.answered = true;
+  activeGame.selected = activeRecall ? null : value;
+  activeGame.result = activeRecall && result.close ? { ...result, correct: true, close: true } : result;
+  activeGame.activeRecallCompleted = activeRecall;
+  if (result.correct || (activeRecall && result.close)) activeGame.score += 1;
+  haptic(result.correct || result.close ? 8 : [18, 30, 18]);
+  renderGameModal();
+};
+
+const handleRapidAnswer = (option) => completeRapidAnswer(option);
+
+const submitRapidHintRecall = (form) => {
+  if (!activeGame || activeGame.type !== 'rapid') return;
+  const value = new FormData(form).get('answer') || '';
+  activeGame.hintRecallValue = String(value);
+  completeRapidAnswer(value, { activeRecall: true });
+};
+
+const advanceRapidGame = (confidenceState = null) => {
+  if (!activeGame || activeGame.type !== 'rapid' || !activeGame.answered) return;
+  const item = activeGame.items[activeGame.index];
+  const result = activeGame.result || { correct: false, score: 0 };
+  reviewItem(state, item.id, result.correct ? 2 : 0, {
+    type: 'rapid',
+    correct: result.correct,
+    score: result.score || (result.correct ? 1 : 0),
+    hintLevel: activeGame.hintLevel || 0,
+    hintsUsed: activeGame.hintStack?.length || 0,
+    activeRecallCompleted: activeGame.activeRecallCompleted,
+    confidenceState,
+  });
+  activeGame.index += 1;
+  activeGame.answered = false;
+  activeGame.selected = null;
+  activeGame.result = null;
+  resetRapidHintState();
+  if (activeGame.index >= activeGame.items.length) {
+    activeGame.finished = true;
+    addActivity(state, { games: 1, minutes: Math.max(2, Math.round((Date.now() - activeGame.startedAt) / 60_000)) });
+  }
+  save();
+  renderGameModal();
 };
 
 const openSettings = () => {
@@ -2048,11 +2828,69 @@ const openWordDetail = (wordId) => {
   `, { label: word.pl });
 };
 
+const requestConversationHint = () => {
+  const persona = PERSONAS.find((entry) => entry.id === state.conversation.selectedPersona) || PERSONAS[0];
+  const conversation = CONVERSATIONS[persona.id];
+  const transcript = ensureConversationState(persona.id);
+  const hintState = ensureConversationHintState(persona.id);
+  if (!conversation || !transcript || !hintState || transcript.completed || hintState.level >= 5) return;
+  const turn = conversation.turns[transcript.turnIndex];
+  const nextLevel = hintState.level + 1;
+  const hint = generateConversationHint(turn, nextLevel, {
+    partialIndex: hintState.partialIndex,
+    history: state.progress.personas[persona.id] || null,
+  });
+  hintState.level = nextLevel;
+  hintState.stack.push(hint);
+  if (nextLevel === 3) hintState.partialIndex += 1;
+  if (nextLevel === 5) {
+    hintState.recallPhase = 'study';
+    hintState.activeRecallCompleted = false;
+  }
+  recordHintUse(state, {
+    level: nextLevel,
+    exerciseType: 'conversation',
+    context: 'conversation',
+    personaId: persona.id,
+  });
+  save();
+  haptic(6);
+  renderTalkIntoView();
+};
+
+const beginConversationHintRecall = () => {
+  const persona = PERSONAS.find((entry) => entry.id === state.conversation.selectedPersona) || PERSONAS[0];
+  const hintState = ensureConversationHintState(persona.id);
+  if (!hintState || hintState.level < 5) return;
+  hintState.recallPhase = 'recall';
+  hintState.activeRecallCompleted = false;
+  save();
+  renderTalkIntoView();
+  setTimeout(() => document.getElementById('conversation-input')?.focus(), 30);
+};
+
+const markConversationAlmostKnown = (personaId, messageId) => {
+  const transcript = ensureConversationState(personaId);
+  const message = transcript?.messages?.find((entry) => entry.id === messageId);
+  if (!message || message.almostKnown) return;
+  message.almostKnown = true;
+  recordAlmostKnown(state, { personaId, context: 'conversation' });
+  save();
+  showToast('Marked as almost known', 'This conversation intention will be weighted sooner without counting as a full failure.', 'brain');
+  renderTalkIntoView();
+};
+
 const sendConversationReply = (providedText = null) => {
   const persona = PERSONAS.find((entry) => entry.id === state.conversation.selectedPersona) || PERSONAS[0];
   const conversation = CONVERSATIONS[persona.id];
   const transcript = ensureConversationState(persona.id);
+  const hintState = ensureConversationHintState(persona.id);
   if (!conversation || !transcript || transcript.completed) return;
+
+  if (hintState?.level === 5 && hintState.recallPhase === 'study') {
+    showToast('Hide the model reply first', 'The final hint only becomes useful when you retrieve the sentence once yourself.', 'lightbulb');
+    return;
+  }
 
   const input = document.getElementById('conversation-input');
   const text = (providedText ?? input?.value ?? '').trim();
@@ -2061,17 +2899,39 @@ const sendConversationReply = (providedText = null) => {
     return;
   }
 
-  const turn = conversation.turns[transcript.turnIndex];
+  const turnIndex = transcript.turnIndex;
+  const turn = conversation.turns[turnIndex];
   const evaluation = evaluateConversationReply(text, turn);
-  transcript.messages.push({ sender: 'user', text, at: new Date().toISOString() });
+  const usedHintLevel = Number(hintState?.level || 0);
+  const activeRecallCompleted = usedHintLevel === 5 && hintState?.recallPhase === 'recall';
+  if (activeRecallCompleted) hintState.activeRecallCompleted = true;
+  const correctionId = `correction-${persona.id}-${turnIndex}-${Date.now()}`;
+
   transcript.messages.push({
+    sender: 'user',
+    text,
+    turnIndex,
+    hintLevel: usedHintLevel,
+    activeRecallCompleted,
+    at: new Date().toISOString(),
+  });
+  transcript.messages.push({
+    id: correctionId,
     sender: 'correction',
+    personaId: persona.id,
+    turnIndex,
     feedback: `${evaluation.feedback}${turn.coach ? ` ${turn.coach}` : ''}`,
     correction: evaluation.correction,
     suggestion: evaluation.accepted ? '' : evaluation.suggestion,
+    hintLevel: usedHintLevel,
+    activeRecallCompleted,
+    almostKnown: false,
     at: new Date().toISOString(),
   });
-  recordConversationTurn(state, persona.id, evaluation.score);
+  recordConversationTurn(state, persona.id, evaluation.score, {
+    hintLevel: usedHintLevel,
+    activeRecallCompleted,
+  });
   addActivity(state, { minutes: 0.5 });
 
   let nextText = null;
@@ -2079,7 +2939,7 @@ const sendConversationReply = (providedText = null) => {
     transcript.turnIndex += 1;
     if (transcript.turnIndex >= conversation.turns.length) {
       transcript.completed = true;
-      transcript.messages.push({ sender: 'system', text: 'Scenario complete · feedback has been added to your learner model.' });
+      transcript.messages.push({ sender: 'system', text: 'Scenario complete · feedback and hint dependence have been added to your learner model.' });
       addActivity(state, { minutes: 2 });
     } else {
       const nextTurn = conversation.turns[transcript.turnIndex];
@@ -2196,6 +3056,103 @@ const sendTutorMessage = async (providedText = null) => {
   }
 };
 
+
+const findTutorExercise = (key) => {
+  const message = (state.tutor.messages || []).find((entry) => entry.role === 'assistant' && entry.at === key);
+  return message?.reply?.exercise || null;
+};
+
+const rerenderTutorExercise = () => {
+  save();
+  if (currentView === 'tutor') {
+    renderView();
+    scrollTutorToBottom();
+  }
+};
+
+const requestTutorHint = (key) => {
+  const exercise = findTutorExercise(key);
+  if (!exercise) return;
+  const exerciseState = ensureTutorExerciseState(key);
+  if (exerciseState.answered || exerciseState.level >= 5) return;
+  const nextLevel = exerciseState.level + 1;
+  const hint = generateTutorExerciseHint(exercise, nextLevel, { partialIndex: exerciseState.partialIndex });
+  exerciseState.level = nextLevel;
+  exerciseState.stack.push(hint);
+  if (nextLevel === 3) exerciseState.partialIndex += 1;
+  if (nextLevel === 5) {
+    exerciseState.recallPhase = 'study';
+    exerciseState.activeRecallCompleted = false;
+  }
+  recordHintUse(state, {
+    level: nextLevel,
+    exerciseType: 'tutor-quick-check',
+    context: 'tutor',
+    conceptId: exercise.grammar?.[0] || null,
+  });
+  haptic(6);
+  rerenderTutorExercise();
+};
+
+const beginTutorHintRecall = (key) => {
+  const exerciseState = ensureTutorExerciseState(key);
+  if (exerciseState.level < 5 || exerciseState.answered) return;
+  exerciseState.recallPhase = 'recall';
+  exerciseState.recallValue = '';
+  exerciseState.recallResult = null;
+  rerenderTutorExercise();
+  setTimeout(() => document.querySelector(`form[data-key="${CSS.escape(key)}"] input`)?.focus(), 30);
+};
+
+const answerTutorExercise = (key, value, { activeRecall = false } = {}) => {
+  const exercise = findTutorExercise(key);
+  if (!exercise) return;
+  const exerciseState = ensureTutorExerciseState(key);
+  if (exerciseState.answered) return;
+  if (exerciseState.level === 5 && exerciseState.recallPhase === 'study') {
+    showToast('Hide the answer first', 'Retrieve it once so the final hint becomes learning rather than copying.', 'lightbulb');
+    return;
+  }
+  const answer = String(value || '').trim();
+  if (!answer) return;
+  const result = evaluateAnswer(answer, exercise.answer || '');
+  if (activeRecall && !result.correct && !result.close) {
+    exerciseState.recallValue = answer;
+    exerciseState.recallResult = result;
+    rerenderTutorExercise();
+    return;
+  }
+  exerciseState.selected = answer;
+  exerciseState.result = activeRecall && result.close ? { ...result, correct: true, close: true } : result;
+  exerciseState.answered = true;
+  exerciseState.activeRecallCompleted = activeRecall;
+  if (activeRecall) {
+    state.stats.activeRecallCompletions = Number(state.stats.activeRecallCompletions || 0) + 1;
+    if (result.correct || result.close) state.stats.hintRecoveries = Number(state.stats.hintRecoveries || 0) + 1;
+  }
+  const weight = getHintEvidenceWeight(exerciseState.level);
+  recordSkillEvidence(state, 'grammar', (result.correct ? 0.92 : result.close ? 0.62 : 0.22) * weight);
+  haptic(result.correct || result.close ? 8 : [20, 35, 20]);
+  rerenderTutorExercise();
+};
+
+const submitTutorHintRecall = (form) => {
+  const key = form.dataset.key || '';
+  const value = new FormData(form).get('answer') || '';
+  const exerciseState = ensureTutorExerciseState(key);
+  exerciseState.recallValue = String(value);
+  answerTutorExercise(key, value, { activeRecall: true });
+};
+
+const markTutorAlmostKnown = (key) => {
+  const exerciseState = ensureTutorExerciseState(key);
+  if (!exerciseState.answered || exerciseState.almostKnown) return;
+  exerciseState.almostKnown = true;
+  recordAlmostKnown(state, { context: 'tutor' });
+  rerenderTutorExercise();
+  showToast('Marked as almost known', 'The coach keeps this signal between correct and incorrect.', 'brain');
+};
+
 const handleAction = (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) return;
@@ -2238,6 +3195,9 @@ const handleAction = (event) => {
       selectedPatternId = target.dataset.pattern;
       renderView();
       break;
+    case 'practice-pattern':
+      startPatternChallenge(target.dataset.pattern || selectedPatternId);
+      break;
     case 'speak':
       speak(target.dataset.text || '');
       break;
@@ -2267,6 +3227,15 @@ const handleAction = (event) => {
     case 'talk-send':
       sendConversationReply();
       break;
+    case 'conversation-hint':
+      requestConversationHint();
+      break;
+    case 'begin-conversation-recall':
+      beginConversationHintRecall();
+      break;
+    case 'conversation-almost':
+      markConversationAlmostKnown(target.dataset.persona || state.conversation.selectedPersona, target.dataset.message || '');
+      break;
     case 'conversation-mic':
       dictateToInput('conversation-input');
       break;
@@ -2279,13 +3248,18 @@ const handleAction = (event) => {
     case 'tutor-prompt':
       sendTutorMessage(target.dataset.text || '');
       break;
-    case 'tutor-check': {
-      const result = evaluateAnswer(target.dataset.option || '', target.dataset.answer || '');
-      recordSkillEvidence(state, 'grammar', result.correct ? 0.9 : 0.2);
-      save();
-      showToast(result.correct ? 'Exactly' : 'Look at the sentence frame again', result.correct ? 'The pattern is becoming available for active use.' : `Best answer: ${target.dataset.answer}`, result.correct ? 'check' : 'lightbulb');
+    case 'tutor-check':
+      answerTutorExercise(target.dataset.key || '', target.dataset.option || '');
       break;
-    }
+    case 'tutor-hint':
+      requestTutorHint(target.dataset.key || '');
+      break;
+    case 'begin-tutor-recall':
+      beginTutorHintRecall(target.dataset.key || '');
+      break;
+    case 'tutor-almost':
+      markTutorAlmostKnown(target.dataset.key || '');
+      break;
     case 'open-settings':
       openSettings();
       break;
@@ -2301,8 +3275,29 @@ const handleAction = (event) => {
     case 'game-tile':
       handleGameTile(target.dataset.tile);
       break;
+    case 'matching-hint':
+      requestMatchingHint();
+      break;
+    case 'begin-matching-recall':
+      beginMatchingHintRecall();
+      break;
+    case 'game-almost':
+      markGameAlmostKnown(target.dataset.pair || '');
+      break;
     case 'rapid-answer':
       handleRapidAnswer(target.dataset.option);
+      break;
+    case 'rapid-hint':
+      requestRapidHint();
+      break;
+    case 'begin-rapid-recall':
+      beginRapidHintRecall();
+      break;
+    case 'rapid-next':
+      advanceRapidGame();
+      break;
+    case 'rapid-almost':
+      advanceRapidGame('almost');
       break;
     case 'finish-game':
       closeModal();
@@ -2343,6 +3338,33 @@ const handleAction = (event) => {
     case 'check-order':
       checkOrderedAnswer();
       break;
+    case 'request-hint':
+      requestSessionHint();
+      break;
+    case 'begin-hint-recall':
+      beginSessionHintRecall();
+      break;
+    case 'show-hint-answer-again':
+      showSessionHintAnswerAgain();
+      break;
+    case 'hint-order-add': {
+      const token = session?.hintRecallTokens?.find((entry) => entry.id === target.dataset.token);
+      if (token && !session.hintRecallOrderSelected.some((entry) => entry.id === token.id)) {
+        session.hintRecallOrderSelected.push(token);
+        renderSession();
+      }
+      break;
+    }
+    case 'hint-order-remove':
+      session.hintRecallOrderSelected = session.hintRecallOrderSelected.filter((entry) => entry.id !== target.dataset.token);
+      renderSession();
+      break;
+    case 'check-hint-order':
+      checkSessionHintOrder();
+      break;
+    case 'complete-hint-recall-speaking':
+      completeSessionHintRecallSpeaking();
+      break;
     case 'record-speech':
       startLocalRecording();
       break;
@@ -2351,6 +3373,9 @@ const handleAction = (event) => {
       break;
     case 'rate-exercise':
       rateCurrentExercise(Number(target.dataset.rating));
+      break;
+    case 'rate-almost':
+      rateCurrentExerciseAlmost();
       break;
     case 'skip-exercise':
       skipCurrentExercise();
@@ -2387,6 +3412,9 @@ const handleSubmit = (event) => {
   if (!form) return;
   event.preventDefault();
   if (form.dataset.action === 'session-typing-form') checkTypedAnswer();
+  if (form.dataset.action === 'hint-recall-form') checkSessionHintRecall();
+  if (form.dataset.action === 'tutor-hint-recall-form') submitTutorHintRecall(form);
+  if (form.dataset.action === 'rapid-hint-recall-form') submitRapidHintRecall(form);
 };
 
 const updateLibraryList = () => {

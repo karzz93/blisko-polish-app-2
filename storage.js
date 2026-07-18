@@ -11,7 +11,7 @@ const todayKey = () => {
 };
 
 export const createDefaultState = () => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   profile: {
     name: 'Kars',
     nativeLanguage: 'nl',
@@ -103,8 +103,39 @@ const deepMerge = (base, saved) => {
   return saved === undefined ? base : saved;
 };
 
+
+const scaffoldLevelFromScore = (score = 0) => {
+  const safeScore = Math.max(0, Number(score) || 0);
+  if (safeScore >= 1.8) return 2;
+  if (safeScore >= 0.5) return 1;
+  return 0;
+};
+
+const seedScaffoldScore = (progress = {}) => {
+  if (Number.isFinite(Number(progress.scaffoldScore))) return Math.max(0, Math.min(4.5, Number(progress.scaffoldScore)));
+  const weights = { 1: 0.1, 2: 0.3, 3: 0.6, 4: 1, 5: 1.4 };
+  const recentHints = Array.isArray(progress.hintHistory) ? progress.hintHistory.slice(-6) : [];
+  let score = recentHints.reduce((sum, entry) => sum + (weights[Math.max(1, Math.min(5, Number(entry?.level) || 1))] || 0), 0);
+  if (!recentHints.length) {
+    const lastLevel = Math.max(0, Math.min(5, Number(progress.lastHintLevel || progress.maxHintLevel || 0)));
+    score += weights[lastLevel] || 0;
+    score += Math.min(0.8, Number(progress.hintedReviews || 0) * 0.18);
+  }
+  return Math.max(0, Math.min(4.5, score));
+};
+
+const migrateScaffoldProgress = (progress = {}) => {
+  progress.scaffoldScore = seedScaffoldScore(progress);
+  progress.scaffoldLevel = scaffoldLevelFromScore(progress.scaffoldScore);
+  progress.supportEpisodes = Number(progress.supportEpisodes || progress.hintedReviews || 0);
+  progress.independentSuccesses = Number(progress.independentSuccesses || 0);
+  progress.lastScaffoldReason = progress.lastScaffoldReason || (progress.scaffoldLevel ? 'Previous hint history' : null);
+  progress.lastScaffoldAt = progress.lastScaffoldAt || null;
+  return progress;
+};
+
 const migrateState = (state) => {
-  state.schemaVersion = 2;
+  state.schemaVersion = 3;
   state.progress = state.progress || {};
   state.progress.items = state.progress.items || {};
   state.progress.concepts = state.progress.concepts || {};
@@ -122,6 +153,15 @@ const migrateState = (state) => {
     progress.lastHintLevel = Number(progress.lastHintLevel || 0);
     progress.almostKnown = Number(progress.almostKnown || 0);
     progress.activeRecallRecoveries = Number(progress.activeRecallRecoveries || 0);
+    migrateScaffoldProgress(progress);
+  });
+
+  Object.values(state.progress.patterns).forEach((progress) => {
+    progress.history = Array.isArray(progress.history) ? progress.history : [];
+    progress.hintsUsed = Number(progress.hintsUsed || 0);
+    progress.maxHintLevel = Number(progress.maxHintLevel || 0);
+    progress.almostKnown = Number(progress.almostKnown || 0);
+    migrateScaffoldProgress(progress);
   });
 
   state.stats = state.stats || {};

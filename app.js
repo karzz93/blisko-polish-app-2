@@ -10,7 +10,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.2.1';
+} from './data.js?v=1.2.2';
 import {
   loadState,
   saveState,
@@ -18,7 +18,7 @@ import {
   resetState,
   exportState,
   importState,
-} from './storage.js?v=1.2.1';
+} from './storage.js?v=1.2.2';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -51,10 +51,11 @@ import {
   recordAlmostKnown,
   recordPatternPractice,
   getHintEvidenceWeight,
+  getAdaptiveSupportLevel,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.2.1';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.2.1';
+} from './engine.js?v=1.2.2';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.2.2';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -135,6 +136,7 @@ let recordingStream = null;
 let recordingChunks = [];
 let recognition = null;
 let tutorAbortController = null;
+let largestVisualViewportHeight = 0;
 
 const mainContent = document.getElementById('main-content');
 const modalRoot = document.getElementById('modal-root');
@@ -192,6 +194,38 @@ const showToast = (title, detail = '', iconName = 'check') => {
     toast.style.transform = 'translateY(8px)';
   }, 3200);
   setTimeout(() => toast.remove(), 3500);
+};
+
+
+const syncVisualViewport = ({ resetBaseline = false } = {}) => {
+  const viewport = window.visualViewport;
+  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight || document.documentElement.clientHeight));
+  const top = Math.max(0, Math.round(viewport?.offsetTop || 0));
+  if (resetBaseline || !largestVisualViewportHeight || height > largestVisualViewportHeight) {
+    largestVisualViewportHeight = height;
+  }
+  const activeElement = document.activeElement;
+  const editing = Boolean(activeElement?.matches?.('input, textarea, [contenteditable="true"]'));
+  const keyboardOpen = Boolean(session && editing && largestVisualViewportHeight - height > 96);
+
+  document.documentElement.style.setProperty('--visual-viewport-height', `${height}px`);
+  document.documentElement.style.setProperty('--visual-viewport-top', `${top}px`);
+  document.documentElement.style.setProperty('--keyboard-height', `${Math.max(0, largestVisualViewportHeight - height)}px`);
+  document.body.classList.toggle('session-keyboard-open', keyboardOpen);
+};
+
+const setupVisualViewport = () => {
+  syncVisualViewport({ resetBaseline: true });
+  const viewport = window.visualViewport;
+  viewport?.addEventListener('resize', () => syncVisualViewport(), { passive: true });
+  viewport?.addEventListener('scroll', () => syncVisualViewport(), { passive: true });
+  window.addEventListener('resize', () => syncVisualViewport(), { passive: true });
+  window.addEventListener('orientationchange', () => {
+    largestVisualViewportHeight = 0;
+    setTimeout(() => syncVisualViewport({ resetBaseline: true }), 180);
+  });
+  document.addEventListener('focusin', () => setTimeout(() => syncVisualViewport(), 40));
+  document.addEventListener('focusout', () => setTimeout(() => syncVisualViewport(), 120));
 };
 
 const speak = (text, { rate = state.settings.speechRate, onEnd = null } = {}) => {
@@ -1556,6 +1590,7 @@ const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8
     hintRecallTokens: [],
     hintRecallOrderSelected: [],
     hintRecallCompleted: false,
+    autofocusTarget: exercises[0]?.type === 'typing' ? 'answer' : null,
     startedAt: Date.now(),
     summarySaved: false,
   };
@@ -1574,7 +1609,23 @@ const startPatternChallenge = (patternId = selectedPatternId) => {
   const secondary = primaryLanguage() === 'nl' ? translationEn : translationNl;
   const tokens = cleanAnswer.split(/\s+/).filter(Boolean)
     .map((value, index) => ({ id: `${pattern.id}-${index}-${value}`, value }));
-  const exerciseType = tokens.length >= 3 ? 'ordering' : 'typing';
+  const patternProgress = state.progress.patterns?.[pattern.id] || null;
+  const adaptiveSupportLevel = getAdaptiveSupportLevel(patternProgress);
+  const baseExerciseType = tokens.length >= 3 ? 'ordering' : 'typing';
+
+  const alternatives = [];
+  Object.entries(pattern.slots || {}).forEach(([slotId, options]) => {
+    (options || []).forEach((option) => {
+      if (option.value === selections[slotId]) return;
+      const candidate = getPatternSentence(pattern, { ...selections, [slotId]: option.value }).replace(/[.!?]+$/g, '');
+      if (candidate !== cleanAnswer && !alternatives.includes(candidate)) alternatives.push(candidate);
+    });
+  });
+
+  let exerciseType = baseExerciseType;
+  if (adaptiveSupportLevel >= 2 && alternatives.length >= 2) exerciseType = 'choice';
+  else if (adaptiveSupportLevel >= 1 && baseExerciseType === 'typing' && tokens.length >= 2) exerciseType = 'ordering';
+
   const exercise = {
     id: `${pattern.id}-${Date.now()}`,
     itemId: null,
@@ -1593,14 +1644,25 @@ const startPatternChallenge = (patternId = selectedPatternId) => {
     },
     translations: { nl: translationNl, en: translationEn },
     type: exerciseType,
+    originalExerciseType: baseExerciseType,
+    adaptiveSupportLevel,
+    adaptiveSupportAdjusted: exerciseType !== baseExerciseType,
+    adaptiveSupportReason: exerciseType === 'choice'
+      ? 'Repeated hint use changed free recall into recognition.'
+      : exerciseType !== baseExerciseType
+        ? 'Repeated hint use changed typing into word selection.'
+        : '',
     direction: 'meaning-to-pl',
     answerKind: 'polish',
-    skill: 'Pattern practice',
-    instruction: 'Build the reusable pattern',
+    skill: exerciseType === 'choice' ? 'Guided pattern recall' : 'Pattern practice',
+    instruction: exerciseType === 'choice' ? 'Choose the reusable pattern' : 'Build the reusable pattern',
     mainText: primary,
     subText: secondary,
     answer: cleanAnswer,
     tokens: shuffle(tokens, `${pattern.id}-${Date.now()}`),
+    options: exerciseType === 'choice'
+      ? shuffle([cleanAnswer, ...alternatives.slice(0, 2)], `${pattern.id}-adaptive-choice-${Date.now()}`)
+      : undefined,
     audioText: answer,
   };
   startSession({
@@ -1703,10 +1765,24 @@ const renderSessionHintPanel = (exercise) => {
   `;
 };
 
+
+const renderCompleteSessionFooter = () => `
+  <div class="session-footer-inner complete-mode">
+    <button class="primary-button complete-primary" type="button" data-action="finish-session">
+      <span>Return to Today</span>${icon('arrow')}
+    </button>
+    <button class="secondary-button complete-secondary" type="button" data-action="session-to-talk">
+      ${icon('message')} Use it in conversation
+    </button>
+  </div>
+`;
+
 const renderSession = () => {
   if (!session) return;
   const complete = session.index >= session.exercises.length;
   if (complete && !session.summarySaved) finalizeSession();
+  const focusTarget = session.autofocusTarget;
+  session.autofocusTarget = null;
 
   modalRoot.innerHTML = `
     <div class="session-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(session.title)}">
@@ -1722,15 +1798,23 @@ const renderSession = () => {
         ${complete ? renderSessionSummary() : renderExercise(currentExercise())}
       </main>
       <footer class="session-footer">
-        ${complete ? `<div class="session-footer-inner"><button class="primary-button" type="button" data-action="finish-session">Back to coach ${icon('arrow')}</button></div>` : renderSessionFooter()}
+        ${complete ? renderCompleteSessionFooter() : renderSessionFooter()}
       </footer>
     </div>
   `;
   hydrateStaticIcons(modalRoot);
-  if (!complete && session.hintRecallPhase === 'recall' && !session.answered) {
-    setTimeout(() => document.getElementById('hint-recall-answer')?.focus(), 30);
-  } else if (!complete && currentExercise()?.type === 'typing' && !session.answered) {
-    setTimeout(() => document.getElementById('session-answer')?.focus(), 30);
+  requestAnimationFrame(() => syncVisualViewport());
+
+  if (!complete && focusTarget === 'recall' && session.hintRecallPhase === 'recall' && !session.answered) {
+    setTimeout(() => {
+      document.getElementById('hint-recall-answer')?.focus({ preventScroll: true });
+      syncVisualViewport();
+    }, 50);
+  } else if (!complete && focusTarget === 'answer' && currentExercise()?.type === 'typing' && !session.answered) {
+    setTimeout(() => {
+      document.getElementById('session-answer')?.focus({ preventScroll: true });
+      syncVisualViewport();
+    }, 50);
   }
 };
 
@@ -1799,9 +1883,21 @@ const renderExercise = (exercise) => {
     `;
   }
 
+  const adaptiveSupportNote = exercise.adaptiveSupportAdjusted ? `
+    <div class="adaptive-scaffold-note level-${Number(exercise.adaptiveSupportLevel || 1)}">
+      <span class="adaptive-scaffold-icon">${icon('sparkles')}</span>
+      <span>
+        <strong>${Number(exercise.adaptiveSupportLevel || 0) >= 2 ? 'Recognition first' : 'Word tiles this time'}</strong>
+        <small>${escapeHtml(exercise.adaptiveSupportReason || 'Blisko made this step smaller because this sentence needed support before.')}</small>
+        ${state.settings.showDutch ? `<em lang="nl">Na een paar zelfstandige goede antwoorden wordt de oefening weer moeilijker.</em>` : ''}
+      </span>
+    </div>
+  ` : '';
+
   return `
     <article class="exercise-card">
       <div class="exercise-eyebrow"><span>${escapeHtml(exercise.instruction)}</span><span class="exercise-skill">${escapeHtml(exercise.skill)}</span></div>
+      ${adaptiveSupportNote}
       <p class="exercise-prompt">${exercise.type === 'listening' ? 'Catch the message, not every sound.' : exercise.type === 'speaking' ? 'Read once, then look away if you can.' : 'Use the whole phrase as a speaking block.'}</p>
       <div class="exercise-main-text">${escapeHtml(exercise.mainText)}</div>
       ${visibleSubText ? `<div class="exercise-subtext${testsMeaning && !session.answered ? ' protected' : ''}">${escapeHtml(visibleSubText)}</div>` : '<div class="exercise-subtext empty" aria-hidden="true"></div>'}
@@ -1901,10 +1997,7 @@ const renderSessionSummary = () => {
         <h4>What changed</h4>
         <p>${newItems ? `${newItems} new item${newItems === 1 ? '' : 's'} entered your memory model. ` : ''}${metrics.unlockedConversations ? `You can now handle ${metrics.unlockedConversations} tracked scenarios at basic readiness.` : 'Your first conversation-readiness signals are now being collected.'}</p>
       </div>
-      <div class="button-row" style="justify-content:center">
-        <button class="primary-button" type="button" data-action="finish-session">Return to coach</button>
-        <button class="secondary-button" type="button" data-action="session-to-talk">Use it in conversation</button>
-      </div>
+      <p class="summary-action-note">Your next action is ready below.</p>
     </section>
   `;
 };
@@ -1926,6 +2019,7 @@ const resetExerciseState = () => {
   session.hintRecallTokens = [];
   session.hintRecallOrderSelected = [];
   session.hintRecallCompleted = false;
+  session.autofocusTarget = currentExercise()?.type === 'typing' ? 'answer' : null;
 };
 
 const requestSessionHint = () => {
@@ -1940,6 +2034,7 @@ const requestSessionHint = () => {
   });
   session.hintLevel = nextLevel;
   session.hintStack.push(hint);
+  session.autofocusTarget = null;
   if (nextLevel === 3) session.hintPartialIndex += 1;
   if (nextLevel === 5) {
     session.hintRecallPhase = 'study';
@@ -1971,6 +2066,7 @@ const beginSessionHintRecall = () => {
     cleanAnswer.split(/\s+/).filter(Boolean).map((value, index) => ({ id: `hint-${index}-${value}`, value })),
     `${exercise?.id || 'hint'}-active-recall`,
   );
+  session.autofocusTarget = !['speaking', 'ordering'].includes(exercise?.type) ? 'recall' : null;
   renderSession();
 };
 
@@ -2132,6 +2228,8 @@ const rateCurrentExercise = (rating, confidenceState = null) => {
     hintsUsed: session.hintStack.length,
     activeRecallCompleted: session.hintRecallCompleted,
     confidenceState,
+    adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
+    originalExerciseType: exercise.originalExerciseType || null,
   };
   if (exercise.itemId) reviewItem(state, exercise.itemId, rating, reviewEvidence);
   else if (exercise.patternId) {
@@ -2157,6 +2255,8 @@ const rateCurrentExercise = (rating, confidenceState = null) => {
     confidenceState,
     hintLevel: session.hintLevel,
     activeRecallCompleted: session.hintRecallCompleted,
+    adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
+    originalExerciseType: exercise.originalExerciseType || null,
     wasNew: exercise.itemId ? !itemProgressBefore : !patternProgressBefore,
   });
   if (result.correct) session.score += Math.max(1, Math.round((Number(rating) + 1) * evidenceWeight));
@@ -2184,6 +2284,8 @@ const closeSession = ({ force = false } = {}) => {
   session = null;
   modalRoot.innerHTML = '';
   document.body.style.overflow = '';
+  document.body.classList.remove('session-keyboard-open');
+  syncVisualViewport();
   updateShell();
   renderView();
 };
@@ -3385,6 +3487,7 @@ const handleAction = (event) => {
       break;
     case 'finish-session':
       closeSession({ force: true });
+      navigate('dashboard');
       break;
     case 'session-to-talk':
       closeSession({ force: true });
@@ -3429,6 +3532,12 @@ const handleInput = (event) => {
     libraryQuery = event.target.value;
     updateLibraryList();
   }
+  if (event.target.id === 'session-answer' && session && !session.answered) {
+    session.typedAnswer = event.target.value;
+  }
+  if (event.target.id === 'hint-recall-answer' && session && !session.answered) {
+    session.hintRecallValue = event.target.value;
+  }
 };
 
 const handleChange = (event) => {
@@ -3460,13 +3569,13 @@ const handleKeydown = (event) => {
 const registerServiceWorker = async () => {
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   try {
-    const reloadKey = 'blisko-sw-reload-v1.2.1';
+    const reloadKey = 'blisko-sw-reload-v1.2.2';
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (sessionStorage.getItem(reloadKey)) return;
       sessionStorage.setItem(reloadKey, '1');
       location.reload();
     });
-    const registration = await navigator.serviceWorker.register('./sw.js?v=1.2.1');
+    const registration = await navigator.serviceWorker.register('./sw.js?v=1.2.2');
     if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     registration.addEventListener('updatefound', () => {
       const worker = registration.installing;
@@ -3563,6 +3672,7 @@ const initialize = async () => {
     showToast(`${state.stats.streak || 0}-day conversation streak`, state.stats.streak ? 'A day counts when you retrieve, speak, or complete a real turn.' : 'Complete one useful learning action today to start it.', 'calendar');
   });
 
+  setupVisualViewport();
   hydrateStaticIcons(document);
   updateShell();
   renderView();

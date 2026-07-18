@@ -5,14 +5,99 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.2.1';
-import { getTodayKey } from './storage.js?v=1.2.1';
+} from './data.js?v=1.2.2';
+import { getTodayKey } from './storage.js?v=1.2.2';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 
 const HINT_EVIDENCE_WEIGHTS = [1, 1, 0.92, 0.78, 0.62, 0.42];
 const HINT_INTERVAL_CAPS = [Infinity, Infinity, 14, 5, 2, 0.75];
+
+// Repeated hint use creates a per-item support pressure. The next encounter can
+// then step down from free typing to word ordering or recognition. Independent
+// retrieval gradually removes the scaffolding again.
+const SCAFFOLD_HINT_PRESSURE = [0, 0.1, 0.3, 0.6, 1, 1.4];
+const SCAFFOLD_MAX_SCORE = 4.5;
+
+const scaffoldLevelFromScore = (score = 0) => {
+  const safeScore = Math.max(0, Number(score) || 0);
+  if (safeScore >= 1.8) return 2;
+  if (safeScore >= 0.5) return 1;
+  return 0;
+};
+
+export const getAdaptiveSupportLevel = (progress = null) => {
+  if (!progress) return 0;
+  const explicitLevel = Number(progress.scaffoldLevel);
+  if (Number.isFinite(explicitLevel)) return clamp(Math.round(explicitLevel), 0, 2);
+  return scaffoldLevelFromScore(progress.scaffoldScore);
+};
+
+const ensureScaffoldFields = (progress) => {
+  if (!progress || typeof progress !== 'object') return progress;
+  progress.scaffoldScore = clamp(Number(progress.scaffoldScore || 0), 0, SCAFFOLD_MAX_SCORE);
+  progress.scaffoldLevel = scaffoldLevelFromScore(progress.scaffoldScore);
+  progress.supportEpisodes = Number(progress.supportEpisodes || 0);
+  progress.independentSuccesses = Number(progress.independentSuccesses || 0);
+  progress.lastScaffoldReason = progress.lastScaffoldReason || null;
+  progress.lastScaffoldAt = progress.lastScaffoldAt || null;
+  return progress;
+};
+
+const applyHintPressure = (progress, level, reason = 'Repeated hints') => {
+  ensureScaffoldFields(progress);
+  const safeLevel = clamp(Math.round(Number(level) || 0), 0, 5);
+  progress.scaffoldScore = clamp(
+    progress.scaffoldScore + (SCAFFOLD_HINT_PRESSURE[safeLevel] || 0),
+    0,
+    SCAFFOLD_MAX_SCORE,
+  );
+  progress.scaffoldLevel = scaffoldLevelFromScore(progress.scaffoldScore);
+  progress.lastScaffoldReason = reason;
+  progress.lastScaffoldAt = new Date().toISOString();
+  return progress.scaffoldLevel;
+};
+
+const updateScaffoldAfterReview = (progress, {
+  rating = 0,
+  correct = true,
+  hintLevel = 0,
+  confidenceState = null,
+} = {}) => {
+  ensureScaffoldFields(progress);
+  const safeRating = clamp(Number(rating) || 0, 0, 3);
+  const safeHintLevel = clamp(Math.round(Number(hintLevel) || 0), 0, 5);
+
+  if (!correct || safeRating === 0) {
+    progress.scaffoldScore = clamp(progress.scaffoldScore + 0.72, 0, SCAFFOLD_MAX_SCORE);
+    progress.supportEpisodes += 1;
+    progress.independentSuccesses = 0;
+    progress.lastScaffoldReason = 'A difficult retrieval';
+  } else if (confidenceState === 'almost') {
+    progress.scaffoldScore = clamp(progress.scaffoldScore + 0.28, 0, SCAFFOLD_MAX_SCORE);
+    progress.supportEpisodes += 1;
+    progress.independentSuccesses = 0;
+    progress.lastScaffoldReason = 'Almost known';
+  } else if (safeHintLevel >= 2) {
+    progress.supportEpisodes += 1;
+    progress.independentSuccesses = 0;
+    progress.lastScaffoldReason = 'Repeated hint support';
+  } else if (safeHintLevel === 0) {
+    const reduction = safeRating >= 3 ? 0.75 : safeRating >= 2 ? 0.45 : 0.18;
+    progress.scaffoldScore = clamp(progress.scaffoldScore - reduction, 0, SCAFFOLD_MAX_SCORE);
+    progress.independentSuccesses += 1;
+    progress.lastScaffoldReason = 'Independent retrieval';
+  } else if (safeRating >= 2) {
+    progress.scaffoldScore = clamp(progress.scaffoldScore - 0.2, 0, SCAFFOLD_MAX_SCORE);
+    progress.independentSuccesses = 0;
+    progress.lastScaffoldReason = 'Lightly supported retrieval';
+  }
+
+  progress.scaffoldLevel = scaffoldLevelFromScore(progress.scaffoldScore);
+  progress.lastScaffoldAt = new Date().toISOString();
+  return progress.scaffoldLevel;
+};
 
 const POLISH_FUNCTION_WORDS = new Set([
   'a', 'ale', 'bo', 'czy', 'do', 'i', 'jak', 'jest', 'już', 'na', 'nie', 'o', 'od', 'po',
@@ -605,6 +690,12 @@ export const ensureItemProgress = (state, itemId) => {
     hintHistory: [],
     almostKnown: 0,
     activeRecallRecoveries: 0,
+    scaffoldScore: 0,
+    scaffoldLevel: 0,
+    supportEpisodes: 0,
+    independentSuccesses: 0,
+    lastScaffoldReason: null,
+    lastScaffoldAt: null,
   };
   state.progress.items[itemId] = {
     ...defaults,
@@ -612,6 +703,7 @@ export const ensureItemProgress = (state, itemId) => {
   };
   if (!Array.isArray(state.progress.items[itemId].history)) state.progress.items[itemId].history = [];
   if (!Array.isArray(state.progress.items[itemId].hintHistory)) state.progress.items[itemId].hintHistory = [];
+  ensureScaffoldFields(state.progress.items[itemId]);
   return state.progress.items[itemId];
 };
 
@@ -652,8 +744,17 @@ export const ensurePatternProgress = (state, patternId) => {
     hintsUsed: 0,
     maxHintLevel: 0,
     almostKnown: 0,
+    history: [],
+    scaffoldScore: 0,
+    scaffoldLevel: 0,
+    supportEpisodes: 0,
+    independentSuccesses: 0,
+    lastScaffoldReason: null,
+    lastScaffoldAt: null,
     ...(state.progress.patterns[patternId] || {}),
   };
+  if (!Array.isArray(state.progress.patterns[patternId].history)) state.progress.patterns[patternId].history = [];
+  ensureScaffoldFields(state.progress.patterns[patternId]);
   return state.progress.patterns[patternId];
 };
 
@@ -747,6 +848,7 @@ export const recordHintUse = (state, {
       context,
     });
     progress.hintHistory = progress.hintHistory.slice(-40);
+    applyHintPressure(progress, safeLevel, safeLevel >= 3 ? 'Several hints on this item' : 'Hint support');
   }
 
   if (conceptId) {
@@ -759,6 +861,7 @@ export const recordHintUse = (state, {
     const progress = ensurePatternProgress(state, patternId);
     progress.hintsUsed += 1;
     progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, safeLevel);
+    applyHintPressure(progress, safeLevel, safeLevel >= 3 ? 'Several hints on this pattern' : 'Hint support');
   }
 
   if (personaId) {
@@ -817,6 +920,22 @@ export const recordPatternPractice = (state, patternId, rating, exercise = {}) =
   progress.confidence = clamp(progress.confidence * 0.78 + target * 0.22 * weight);
   progress.lastSeenAt = new Date().toISOString();
   progress.maxHintLevel = Math.max(progress.maxHintLevel || 0, hintLevel);
+  updateScaffoldAfterReview(progress, {
+    rating: rawRating,
+    correct,
+    hintLevel,
+    confidenceState,
+  });
+  progress.history.push({
+    at: progress.lastSeenAt,
+    rating: rawRating,
+    correct,
+    hintLevel,
+    confidenceState,
+    exerciseType: exercise.type || null,
+    adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
+  });
+  progress.history = progress.history.slice(-30);
   if (confidenceState === 'almost') recordAlmostKnown(state, { patternId, context: 'pattern' });
   addActivity(state, { reviews: 1 });
   return progress;
@@ -903,6 +1022,13 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     }
   }
 
+  updateScaffoldAfterReview(progress, {
+    rating: rawRating,
+    correct: exercise.correct !== false,
+    hintLevel,
+    confidenceState,
+  });
+
   progress.reps += 1;
   progress.lastReviewedAt = now.toISOString();
   progress.lastRating = numericRating;
@@ -918,6 +1044,8 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     hintsUsed: Number(exercise.hintsUsed || 0),
     confidenceState,
     activeRecallCompleted: Boolean(exercise.activeRecallCompleted),
+    adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
+    originalExerciseType: exercise.originalExerciseType || null,
   });
   progress.history = progress.history.slice(-30);
 
@@ -1005,7 +1133,7 @@ const itemPriorityScore = (state, item, { topic = null } = {}) => {
   return unseenBonus + weakness + dueBonus + priority * 0.35 + topicBonus + phraseBonus + verbBonus + familyBonus + staleness;
 };
 
-const chooseExerciseType = (item, progress, index, mode) => {
+const chooseBaseExerciseType = (item, progress, index, mode) => {
   if (mode === 'speaking') return index % 2 === 0 ? 'speaking' : 'typing';
   if (mode === 'listening') return index % 2 === 0 ? 'listening' : 'choice';
   if (mode === 'review') {
@@ -1016,6 +1144,27 @@ const chooseExerciseType = (item, progress, index, mode) => {
   if (progress.confidence < 0.35) return index % 2 ? 'choice' : 'typing';
   if (progress.confidence < 0.7) return ['typing','ordering','listening'][index % 3];
   return ['typing','speaking','ordering','listening'][index % 4];
+};
+
+const chooseExerciseType = (item, progress, index, mode) => {
+  const originalType = chooseBaseExerciseType(item, progress, index, mode);
+  const adaptiveSupportLevel = getAdaptiveSupportLevel(progress);
+  const canOrder = item.itemType === 'phrase' && item.pl.replace(/[.!?]/g, '').split(/\s+/).filter(Boolean).length >= 3;
+  let type = originalType;
+
+  // Listening and speaking stay modality-specific. Productive written tasks are
+  // the ones stepped down after repeated hint use.
+  if (!['listening', 'speaking'].includes(originalType)) {
+    if (adaptiveSupportLevel >= 2 && ['typing', 'ordering'].includes(originalType)) type = 'choice';
+    else if (adaptiveSupportLevel >= 1 && originalType === 'typing') type = canOrder ? 'ordering' : 'choice';
+  }
+
+  return {
+    type,
+    originalType,
+    adaptiveSupportLevel,
+    adjusted: type !== originalType,
+  };
 };
 
 const getDistractors = (item, field, count = 3) => {
@@ -1032,7 +1181,8 @@ const getDistractors = (item, field, count = 3) => {
 const translationFor = (item, language = 'nl') => language === 'en' ? item.en : item.nl;
 
 export const makeExercise = (item, progress, index = 0, { mode = 'smart', language = 'nl' } = {}) => {
-  const preferredType = chooseExerciseType(item, progress, index, mode);
+  const exercisePlan = chooseExerciseType(item, progress, index, mode);
+  const preferredType = exercisePlan.type;
   const translation = translationFor(item, language);
   const dualTranslation = language === 'nl' ? item.en : item.nl;
   const base = {
@@ -1044,10 +1194,20 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     source: item,
     translations: { nl: item.nl || '', en: item.en || '' },
     answer: item.pl,
+    originalExerciseType: exercisePlan.originalType,
+    adaptiveSupportLevel: exercisePlan.adaptiveSupportLevel,
+    adaptiveSupportAdjusted: exercisePlan.adjusted,
+    adaptiveSupportReason: exercisePlan.adjusted
+      ? (exercisePlan.adaptiveSupportLevel >= 2
+        ? 'Repeated hint use changed free recall into recognition.'
+        : 'Repeated hint use changed typing into word selection.')
+      : '',
   };
 
   if (preferredType === 'choice') {
-    const direction = index % 2 === 0 ? 'pl-to-meaning' : 'meaning-to-pl';
+    const adaptivePolishRecognition = exercisePlan.adjusted
+      && ['typing', 'ordering'].includes(exercisePlan.originalType);
+    const direction = adaptivePolishRecognition ? 'meaning-to-pl' : (index % 2 === 0 ? 'pl-to-meaning' : 'meaning-to-pl');
     if (direction === 'pl-to-meaning') {
       const options = shuffle([translation, ...getDistractors(item, language, 3)], `${item.id}-choice-a`);
       return {
@@ -1065,7 +1225,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
         audioText: item.pl,
       };
     }
-    const options = shuffle([item.pl, ...getDistractors(item, 'pl', 3)], `${item.id}-choice-b`);
+    const distractorCount = exercisePlan.adaptiveSupportLevel >= 2 ? 2 : 3;
+    const options = shuffle([item.pl, ...getDistractors(item, 'pl', distractorCount)], `${item.id}-choice-b-${exercisePlan.adaptiveSupportLevel}`);
     return {
       ...base,
       type: 'choice',

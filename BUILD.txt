@@ -1,2 +1,3 @@
-Blisko 1.2.1 black-screen repair
+Blisko 1.2.2 adaptive scaffolding and mobile session controls
 Progressive hints included
+Progress data preserved

@@ -1,4 +1,80 @@
-export const APP_VERSION = '1.2.2';
+export const APP_VERSION = '1.3.0';
+
+
+
+// A short, conservative diagnostic. It measures how the learner retrieves
+// Polish across different skills; it never assumes that opening a lesson means
+// mastery. Questions are deliberately based on high-value family situations.
+export const PLACEMENT_QUESTIONS = [
+  {
+    id: 'place_reading_a0', level: 'A0', skill: 'reading', type: 'choice',
+    instruction: 'Choose the meaning', mainText: 'Dzień dobry.',
+    options: ['Good morning / afternoon.', 'Good night.', 'See you tomorrow.'],
+    answer: 'Good morning / afternoon.', itemId: 'w_dzien_dobry', weight: 1,
+  },
+  {
+    id: 'place_guided_a0', level: 'A0', skill: 'guidedProduction', type: 'choice',
+    instruction: 'Choose the natural Polish', mainText: 'Thank you very much.',
+    options: ['Dziękuję bardzo.', 'Proszę bardzo.', 'Przepraszam bardzo.'],
+    answer: 'Dziękuję bardzo.', weight: 1,
+  },
+  {
+    id: 'place_listening_a1', level: 'A1', skill: 'listening', type: 'listening',
+    instruction: 'Listen and choose the meaning', mainText: 'Tap to listen',
+    audioText: 'Gdzie jest sklep?',
+    options: ['Where is the shop?', 'How much is it?', 'When is dinner?'],
+    answer: 'Where is the shop?', itemId: 'p_shop_04', weight: 1.15,
+  },
+  {
+    id: 'place_grammar_a1', level: 'A1', skill: 'grammar', type: 'choice',
+    instruction: 'Choose the missing word', mainText: 'Jadę ___ Polski.',
+    options: ['do', 'w', 'na'], answer: 'do', conceptId: 'do_genitive', weight: 1.15,
+  },
+  {
+    id: 'place_free_a1', level: 'A1', skill: 'freeProduction', type: 'typing',
+    instruction: 'Write this in Polish', mainText: "I don't understand.",
+    answer: 'Nie rozumiem.', acceptedAnswers: ['Nie rozumiem'], itemId: 'p_repair_01', weight: 1.2,
+  },
+  {
+    id: 'place_reading_a1', level: 'A1', skill: 'reading', type: 'choice',
+    instruction: 'Choose the meaning', mainText: 'Czy mogę w czymś pomóc?',
+    options: ['Can I help with anything?', 'May I sit here?', 'Could you repeat that?'],
+    answer: 'Can I help with anything?', itemId: 'p_family_02', weight: 1.15,
+  },
+  {
+    id: 'place_guided_a1', level: 'A1', skill: 'ordering', type: 'ordering',
+    instruction: 'Build the sentence', mainText: 'I live in the Netherlands.',
+    answer: 'Mieszkam w Holandii', tokens: ['Mieszkam', 'w', 'Holandii'], itemId: 'p_visit_03', weight: 1.2,
+  },
+  {
+    id: 'place_listening_a2', level: 'A2', skill: 'listening', type: 'listening',
+    instruction: 'Listen and choose the meaning', mainText: 'Tap to listen',
+    audioText: 'Jak minęła podróż?',
+    options: ['How was the journey?', 'Where are the suitcases?', 'How long will you stay?'],
+    answer: 'How was the journey?', itemId: 'p_family_03', weight: 1.35,
+  },
+  {
+    id: 'place_free_a2', level: 'A2', skill: 'freeProduction', type: 'typing',
+    instruction: 'Write a natural Polish request', mainText: 'I would like a table for two people.',
+    answer: 'Chciałbym zarezerwować stolik dla dwóch osób.',
+    acceptedAnswers: [
+      'Chciałabym zarezerwować stolik dla dwóch osób.',
+      'Poproszę stolik dla dwóch osób.',
+      'Stolik dla dwóch osób, proszę.',
+    ],
+    itemId: 'p_rest_01', weight: 1.45,
+  },
+  {
+    id: 'place_grammar_a2', level: 'A2', skill: 'grammar', type: 'choice',
+    instruction: 'Choose the natural ending', mainText: 'Interesuję się sportami ___.',
+    options: ['motorowymi', 'motorowe', 'motorowych'], answer: 'motorowymi', conceptId: 'case_instrumental', weight: 1.35,
+  },
+  {
+    id: 'place_pronunciation', level: 'A1', skill: 'pronunciation', type: 'speaking',
+    instruction: 'Read this aloud, then self-rate', mainText: 'Proszę mówić trochę wolniej.',
+    audioText: 'Proszę mówić trochę wolniej.', itemId: 'p_repair_02', weight: 1.1,
+  },
+];
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Today', shortLabel: 'Today', icon: 'home' },

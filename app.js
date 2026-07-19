@@ -1,4 +1,6 @@
 import {
+  APP_VERSION,
+  PLACEMENT_QUESTIONS,
   NAV_ITEMS,
   TOPICS,
   WORDS,
@@ -10,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.2.2';
+} from './data.js?v=1.3.0';
 import {
   loadState,
   saveState,
@@ -18,7 +20,14 @@ import {
   resetState,
   exportState,
   importState,
-} from './storage.js?v=1.2.2';
+  validateBackup,
+  createSafetyBackup,
+  listSafetyBackups,
+  restoreLatestSafetyBackup,
+  ensureAutomaticBackup,
+  markStartupHealthy,
+  getStorageHealth,
+} from './storage.js?v=1.3.0';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -52,10 +61,12 @@ import {
   recordPatternPractice,
   getHintEvidenceWeight,
   getAdaptiveSupportLevel,
+  getExerciseSkill,
+  applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.2.2';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.2.2';
+} from './engine.js?v=1.3.0';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.3.0';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -137,6 +148,8 @@ let recordingChunks = [];
 let recognition = null;
 let tutorAbortController = null;
 let largestVisualViewportHeight = 0;
+let placementSession = null;
+let appHealthSnapshot = null;
 
 const mainContent = document.getElementById('main-content');
 const modalRoot = document.getElementById('modal-root');
@@ -157,6 +170,34 @@ const primaryLanguage = () => state.settings.showDutch ? 'nl' : 'en';
 const secondaryLanguage = () => primaryLanguage() === 'nl' ? 'en' : 'nl';
 const primaryTranslation = (item) => item?.[primaryLanguage()] || item?.nl || item?.en || '';
 const secondaryTranslation = (item) => item?.[secondaryLanguage()] || '';
+
+
+const evaluationContextFor = (exercise = {}) => ({
+  language: exercise.answerKind === 'polish' || exercise.answerKind === 'speech' || ['typing', 'ordering', 'speaking'].includes(exercise.type)
+    ? 'pl'
+    : primaryLanguage(),
+  answerKind: exercise.answerKind,
+  acceptedAnswers: exercise.acceptedAnswers || exercise.source?.acceptedAnswers || [],
+  alternatives: exercise.alternatives || exercise.source?.alternatives || [],
+  grammar: exercise.grammar || exercise.source?.grammar || [],
+  source: exercise.source || null,
+  exercise,
+});
+
+const evaluateExerciseAnswer = (value, exercise = currentExercise()) => evaluateAnswer(
+  value,
+  exercise?.answer || '',
+  evaluationContextFor(exercise || {}),
+);
+
+const formatDateTime = (iso) => {
+  if (!iso) return 'Not yet';
+  try {
+    return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+};
 
 const topicColor = (topic) => {
   const color = topic?.color || 'green';
@@ -350,6 +391,7 @@ const closeModal = () => {
   modalRoot.innerHTML = '';
   document.body.style.overflow = '';
   activeGame = null;
+  placementSession = null;
 };
 
 const renderView = () => {
@@ -386,6 +428,10 @@ function renderDashboard() {
   const nextScenario = REAL_LIFE_SCENARIOS
     .map((scenario) => ({ scenario, score: getScenarioReadiness(state, scenario) }))
     .sort((a, b) => b.score - a.score)[0];
+  const placement = state.onboarding?.placement || {};
+  const placementLevel = placement.estimatedLevel === 'Pre-A1' ? 'A0' : placement.estimatedLevel;
+  const placementCompleted = Boolean(placement.completedAt);
+  const placementMode = placementCompleted ? 'recalibration' : 'placement';
 
   return `
     <div class="view section-stack">
@@ -445,6 +491,20 @@ function renderDashboard() {
             Begin today’s path ${icon('arrow')}
           </button>
         </article>
+      </section>
+
+      <section class="card calibration-banner ${metrics.recalibrationDue ? 'needs-check' : ''}">
+        <span class="calibration-banner-icon">${icon('target')}</span>
+        <div class="calibration-banner-copy">
+          <span class="progress-overline">${placementCompleted ? 'PERSONAL LEVEL CALIBRATION' : 'START WITH WHAT YOU ALREADY KNOW'}</span>
+          <h3>${placementCompleted ? `Current evidence: ${escapeHtml(placementLevel || metrics.cefr)} · ${Math.round(metrics.evidenceConfidence * 100)}% confidence` : 'Take a short level check before Blisko decides what is easy or hard.'}</h3>
+          <p>${placementCompleted
+            ? `${metrics.recalibrationDue ? 'Your last check is ready to be refreshed.' : `Last calibrated ${formatDateRelative(placement.completedAt)}.`} Daily practice still has more weight than the diagnostic.`
+            : 'Eleven compact checks measure reading, listening, guided and free production, grammar, and pronunciation confidence.'}</p>
+        </div>
+        <button class="${placementCompleted && !metrics.recalibrationDue ? 'secondary-button' : 'primary-button'} calibration-banner-action" type="button" data-action="open-placement" data-mode="${placementMode}">
+          ${placementCompleted ? (metrics.recalibrationDue ? 'Recalibrate level' : 'Check level again') : 'Start 4-minute check'} ${icon('arrow')}
+        </button>
       </section>
 
       <section class="metric-grid">
@@ -1229,11 +1289,11 @@ function renderProgress() {
   const estimateLow = estimatedDays ? Math.max(7, Math.round(estimatedDays * 0.8)) : 0;
   const estimateHigh = estimatedDays ? Math.max(estimateLow + 1, Math.round(estimatedDays * 1.25)) : 0;
   const levelLabel = metrics.cefr === 'Pre-A1' ? 'A0' : metrics.cefr;
-  const evidenceUnits = state.stats.reviews
-    + state.stats.speakingAttempts * 2
-    + state.stats.conversationTurns * 1.5
-    + Object.keys(state.progress.concepts).length * 2;
-  const estimateEvidence = clamp(evidenceUnits / 110);
+  const placement = state.onboarding?.placement || {};
+  const placementLevelLabel = placement.estimatedLevel === 'Pre-A1' ? 'A0' : placement.estimatedLevel;
+  const placementMode = placement.completedAt ? 'recalibration' : 'placement';
+  const placementDateCopy = placement.completedAt ? formatDateRelative(placement.completedAt) : 'not checked yet';
+  const estimateEvidence = metrics.evidenceConfidence;
   const estimateConfidence = estimateEvidence < 0.25 ? 'early estimate' : estimateEvidence < 0.62 ? 'growing evidence' : 'well supported';
   const forecastCopy = estimatedDays
     ? `Realistic range: ${estimateLow}–${estimateHigh} days. The estimate becomes more personal after every speaking attempt and conversation.`
@@ -1241,19 +1301,21 @@ function renderProgress() {
   const forecastCopyNl = estimatedDays
     ? `Realistische bandbreedte: ${estimateLow}–${estimateHigh} dagen. De schatting wordt persoonlijker na elke spreekoefening en elk gesprek.`
     : 'Je huidige resultaten hebben het doel voor ontspannen familiegesprekken bereikt.';
-  const production = clamp(metrics.speaking * 0.48 + metrics.grammar * 0.27 + metrics.conversationReadiness * 0.25);
   const snapshotSkills = [
-    { title: 'Reading', secondary: 'Lezen', value: metrics.reading },
-    { title: 'Producing', secondary: 'Produceren', value: production },
-    { title: 'Listening', secondary: 'Luisteren', value: metrics.listening },
-    { title: 'Speaking', secondary: 'Spreken', value: metrics.speaking },
+    { id: 'reading', title: 'Reading recognition', secondary: 'Leesherkenning', value: metrics.reading, attempts: metrics.skills.reading.attempts },
+    { id: 'listening', title: 'Listening', secondary: 'Luisteren', value: metrics.listening, attempts: metrics.skills.listening.attempts },
+    { id: 'guidedProduction', title: 'Guided production', secondary: 'Begeleid produceren', value: metrics.guidedProduction, attempts: metrics.skills.guidedProduction.attempts },
+    { id: 'freeProduction', title: 'Free production', secondary: 'Zelf produceren', value: metrics.freeProduction, attempts: metrics.skills.freeProduction.attempts },
+    { id: 'pronunciation', title: 'Pronunciation', secondary: 'Uitspraak', value: metrics.pronunciation, attempts: metrics.skills.pronunciation.attempts },
   ];
   const detailedSkills = [
-    { id: 'speaking', title: 'Speaking', value: metrics.speaking, icon: 'mic', detail: `${state.stats.speakingAttempts} attempts` },
-    { id: 'listening', title: 'Listening', value: metrics.listening, icon: 'headphones', detail: 'meaning at natural speed' },
-    { id: 'reading', title: 'Reading', value: metrics.reading, icon: 'book', detail: `${state.stats.wordsSeen.length} items seen` },
-    { id: 'grammar', title: 'Grammar', value: metrics.grammar, icon: 'brain', detail: `${Object.keys(state.progress.concepts).length} patterns touched` },
-    { id: 'conversation', title: 'Conversation', value: metrics.conversationReadiness, icon: 'message', detail: `${state.stats.conversationTurns} turns` },
+    { id: 'reading', title: 'Reading recognition', value: metrics.reading, icon: 'book', detail: `${metrics.skills.reading.attempts} measured attempts` },
+    { id: 'listening', title: 'Listening', value: metrics.listening, icon: 'headphones', detail: `${metrics.skills.listening.attempts} measured attempts` },
+    { id: 'guidedProduction', title: 'Guided production', value: metrics.guidedProduction, icon: 'grid', detail: `${metrics.skills.guidedProduction.attempts} supported retrievals` },
+    { id: 'freeProduction', title: 'Free production', value: metrics.freeProduction, icon: 'message', detail: `${metrics.skills.freeProduction.attempts} independent answers` },
+    { id: 'pronunciation', title: 'Pronunciation confidence', value: metrics.pronunciation, icon: 'mic', detail: `${metrics.skills.pronunciation.attempts} speaking signals` },
+    { id: 'grammar', title: 'Grammar in use', value: metrics.grammar, icon: 'brain', detail: `${Object.keys(state.progress.concepts).length} patterns touched` },
+    { id: 'conversation', title: 'Conversation', value: metrics.conversationReadiness, icon: 'users', detail: `${state.stats.conversationTurns} turns` },
   ];
   const hasSkillEvidence = snapshotSkills.some((skill) => skill.value > 0.01);
   const strongestSkill = hasSkillEvidence
@@ -1261,7 +1323,9 @@ function renderProgress() {
     : { title: 'Baseline pending', secondary: 'Nog te meten', value: 0 };
   const weakestSkill = hasSkillEvidence
     ? [...snapshotSkills].sort((a, b) => a.value - b.value)[0]
-    : { title: 'Speaking', secondary: 'Spreken', value: 0 };
+    : { title: 'Free production', secondary: 'Zelf produceren', value: 0 };
+  const leastMeasuredSkill = [...snapshotSkills].sort((a, b) => a.attempts - b.attempts)[0];
+  const readyCanDoCount = metrics.canDo.filter((task) => task.ready).length;
   const conceptRows = GRAMMAR_CONCEPTS
     .map((concept) => ({ concept, progress: state.progress.concepts[concept.id] || { confidence: 0, reviews: 0, mistakes: 0 } }))
     .sort((a, b) => b.progress.reviews - a.progress.reviews || b.concept.priority - a.concept.priority)
@@ -1362,7 +1426,7 @@ function renderProgress() {
           <div class="snapshot-skill-list">
             ${snapshotSkills.map((skill) => `
               <div class="snapshot-skill-row">
-                <span><strong>${escapeHtml(skill.title)}</strong><small lang="nl">${escapeHtml(skill.secondary)}</small></span>
+                <span><strong>${escapeHtml(skill.title)}</strong><small lang="nl">${escapeHtml(skill.secondary)} · ${skill.attempts} checks</small></span>
                 <div class="snapshot-skill-track"><i style="width:${Math.round(skill.value * 100)}%"></i></div>
                 <b>${Math.round(skill.value * 100)}%</b>
               </div>
@@ -1374,7 +1438,7 @@ function renderProgress() {
         <article class="card support-independence-card">
           <div class="support-independence-head">
             <div><span class="progress-overline">SUPPORT INDEPENDENCE<small lang="nl">Zelfstandig zonder hulp</small></span><h3>${evidenceReviews.length ? `${Math.round(independenceRate * 100)}% independent retrieval` : 'No hint baseline yet'}</h3><p><span>Hints are not failures. This measures how often useful Polish returns before support is needed.</span><small class="secondary-sentence" lang="nl">Hints zijn geen fouten. Dit meet hoe vaak bruikbaar Pools terugkomt vóórdat hulp nodig is.</small></p></div>
-            <div class="support-independence-score"><strong>${independentCorrect}</strong><span>independent wins</span></div>
+            <div class="support-independence-score" style="--independence:${Math.round(independenceRate * 100)}%"><strong>${independentCorrect}</strong><span>independent wins</span></div>
           </div>
           <div class="support-independence-track"><span style="width:${Math.round(independenceRate * 100)}%"></span></div>
           <div class="support-evidence-grid">
@@ -1394,12 +1458,16 @@ function renderProgress() {
           <div>
             <p class="eyebrow progress-page-eyebrow">ESTIMATED COMMUNICATIVE LEVEL <small lang="nl">GESCHAT COMMUNICATIEF NIVEAU</small></p>
             <h2>${levelLabel} → ${metrics.nextCefr}</h2>
-            <p>This is a conservative estimate from active recall, speaking, listening, grammar patterns, and completed scenarios—not a claim based on lesson count.</p>
+            <p>This is a conservative estimate from active recall, listening, guided and free production, pronunciation, grammar patterns, and completed scenarios—not a claim based on lesson count.</p>
             <div class="cefr-scale">
               ${['A0','A1','A2','B1','B2','C1'].map((label) => `<span class="${levelLabel === label ? 'active' : ''}">${label}</span>`).join('')}
             </div>
+            <div class="cefr-calibration-row">
+              <span><strong>${placement.completedAt ? `Last diagnostic: ${escapeHtml(placementLevelLabel || levelLabel)}` : 'No diagnostic baseline yet'}</strong><small>${placement.completedAt ? `${placementDateCopy} · normal practice now updates the estimate continuously` : 'An 11-question check gives the model a safer starting point.'}</small></span>
+              <button class="secondary-button compact" type="button" data-action="open-placement" data-mode="${placementMode}">${placement.completedAt ? (metrics.recalibrationDue ? 'Recalibrate' : 'Check again') : 'Take level check'}</button>
+            </div>
           </div>
-          <div class="cefr-badge"><strong>${levelLabel}</strong><span>${Math.round(metrics.cefrProgress * 100)}% to ${metrics.nextCefr}</span></div>
+          <div class="cefr-badge"><strong>${levelLabel}</strong><span>${Math.round(metrics.cefrProgress * 100)}% to ${metrics.nextCefr}</span><small>${Math.round(metrics.evidenceConfidence * 100)}% evidence confidence</small></div>
         </article>
 
         <article class="card conversation-card">
@@ -1410,6 +1478,30 @@ function renderProgress() {
             ${unlocked.length ? unlocked.slice(0, 6).map(({ scenario }) => `<span class="conversation-tag">${scenario.emoji} ${escapeHtml(scenario.title)}</span>`).join('') : '<span class="conversation-tag">First scenario unlocks at 56% readiness</span>'}
           </div>
           <button class="secondary-button progress-next-button" type="button" data-action="go-view" data-view="talk">Practise this scenario ${icon('arrow')}</button>
+        </article>
+      </section>
+
+      <section class="can-do-calibration-grid">
+        <article class="card can-do-card">
+          <div class="section-heading">
+            <div><p class="eyebrow progress-page-eyebrow">REAL-LIFE CAN-DO EVIDENCE <small lang="nl">Bewijs uit echte situaties</small></p><h2>${readyCanDoCount} of ${metrics.canDo.length} practical abilities ready</h2><p>CEFR estimates become useful only when they describe what you can actually do.</p></div>
+            <span class="can-do-score">${readyCanDoCount}/${metrics.canDo.length}</span>
+          </div>
+          <div class="can-do-list">
+            ${metrics.canDo.map((task) => `<div class="can-do-row ${task.ready ? 'ready' : ''}"><span>${task.ready ? icon('check') : icon('lock')}</span><p>${escapeHtml(task.label)}</p><b>${task.ready ? 'Ready' : 'Building'}</b></div>`).join('')}
+          </div>
+        </article>
+        <article class="card evidence-quality-card">
+          <span class="progress-overline">EVIDENCE QUALITY<small lang="nl">Kwaliteit van de meting</small></span>
+          <h3>${Math.round(metrics.evidenceConfidence * 100)}% confidence in this estimate</h3>
+          <p>The model lowers certainty when a skill has too few attempts. It never fills an evidence gap with vocabulary count alone.</p>
+          <div class="evidence-quality-meter"><span style="width:${Math.round(metrics.evidenceConfidence * 100)}%"></span></div>
+          <div class="evidence-quality-facts">
+            <span><strong>Least measured</strong><b>${escapeHtml(leastMeasuredSkill.title)} · ${leastMeasuredSkill.attempts} checks</b></span>
+            <span><strong>Diagnostic</strong><b>${placement.completedAt ? `${escapeHtml(placementLevelLabel || levelLabel)} · ${placementDateCopy}` : 'Not completed'}</b></span>
+            <span><strong>Recalibration</strong><b>${metrics.recalibrationDue ? 'Recommended now' : 'Not needed yet'}</b></span>
+          </div>
+          <button class="${metrics.recalibrationDue ? 'primary-button' : 'secondary-button'}" type="button" data-action="open-placement" data-mode="${placementMode}">${placement.completedAt ? 'Recalibrate across all skills' : 'Create a diagnostic baseline'} ${icon('arrow')}</button>
         </article>
       </section>
 
@@ -1672,6 +1764,249 @@ const startPatternChallenge = (patternId = selectedPatternId) => {
   });
 };
 
+
+const PLACEMENT_SKILL_LABELS = {
+  reading: 'Reading recognition',
+  listening: 'Listening',
+  guidedProduction: 'Guided production',
+  freeProduction: 'Free production',
+  pronunciation: 'Pronunciation confidence',
+  grammar: 'Grammar patterns',
+};
+
+const currentPlacementQuestion = () => placementSession?.questions?.[placementSession.index] || null;
+
+const openPlacementTest = (mode = 'placement') => {
+  placementSession = {
+    mode,
+    questions: PLACEMENT_QUESTIONS.map((question) => ({
+      ...question,
+      tokens: question.type === 'ordering'
+        ? shuffle((question.tokens || []).map((value, index) => ({ id: `${question.id}-${index}`, value })), `${question.id}-${Date.now()}`)
+        : question.tokens,
+    })),
+    index: 0,
+    results: [],
+    answered: false,
+    answerResult: null,
+    selected: null,
+    typedAnswer: '',
+    orderSelected: [],
+    summary: null,
+    startedAt: Date.now(),
+  };
+  document.body.style.overflow = 'hidden';
+  renderPlacementTest();
+};
+
+const placementAnswerScore = (result) => {
+  if (result.correct) return result.errorType === 'minor_spelling' ? 0.9 : 1;
+  if (result.close) return Math.max(0.46, Math.min(0.68, Number(result.score || 0.55)));
+  return Math.max(0, Math.min(0.25, Number(result.score || 0) * 0.3));
+};
+
+const recordPlacementAnswer = (value, { score = null, selfRated = false } = {}) => {
+  if (!placementSession || placementSession.answered) return;
+  const question = currentPlacementQuestion();
+  if (!question) return;
+  const result = selfRated
+    ? {
+      correct: Number(score) >= 0.58,
+      close: Number(score) >= 0.35 && Number(score) < 0.58,
+      score: clamp(Number(score) || 0),
+      errorType: 'self_rated_speaking',
+      verdict: Number(score) >= 0.78 ? 'Comfortable aloud' : Number(score) >= 0.45 ? 'Possible with effort' : 'Not available yet',
+      message: 'This self-rating is used only as early pronunciation evidence. Future speaking attempts will replace it.',
+      messageNl: 'Deze zelfbeoordeling is alleen vroege uitspraak-informatie. Latere spreekoefeningen vervangen dit bewijs.',
+      expected: question.audioText || question.mainText,
+    }
+    : evaluateAnswer(value, question.answer || '', {
+      language: ['typing', 'ordering'].includes(question.type) ? 'pl' : 'en',
+      acceptedAnswers: question.acceptedAnswers || [],
+      grammar: question.conceptId ? [question.conceptId] : [],
+      answerKind: ['typing', 'ordering'].includes(question.type) ? 'polish' : 'meaning',
+    });
+  const finalScore = score === null ? placementAnswerScore(result) : clamp(Number(score) || 0);
+  placementSession.selected = value;
+  placementSession.typedAnswer = question.type === 'typing' ? String(value || '') : placementSession.typedAnswer;
+  placementSession.answerResult = result;
+  placementSession.answered = true;
+  placementSession.results.push({
+    questionId: question.id,
+    level: question.level,
+    skill: question.skill,
+    weight: question.weight || 1,
+    score: finalScore,
+    correct: result.correct,
+    close: result.close,
+    errorType: result.errorType || null,
+    itemId: question.itemId || null,
+    conceptId: question.conceptId || null,
+  });
+  haptic(result.correct ? 8 : result.close ? 5 : [18, 30, 18]);
+  renderPlacementTest();
+};
+
+const advancePlacementTest = () => {
+  if (!placementSession) return;
+  if (!placementSession.answered) {
+    const question = currentPlacementQuestion();
+    placementSession.results.push({
+      questionId: question?.id,
+      level: question?.level,
+      skill: question?.skill,
+      weight: question?.weight || 1,
+      score: 0,
+      correct: false,
+      close: false,
+      errorType: 'skipped',
+      itemId: question?.itemId || null,
+      conceptId: question?.conceptId || null,
+    });
+  }
+  if (placementSession.index >= placementSession.questions.length - 1) {
+    placementSession.summary = applyPlacementResult(state, placementSession.results, { mode: placementSession.mode });
+    placementSession.index = placementSession.questions.length;
+    save({ immediate: true });
+    renderPlacementTest();
+    return;
+  }
+  placementSession.index += 1;
+  placementSession.answered = false;
+  placementSession.answerResult = null;
+  placementSession.selected = null;
+  placementSession.typedAnswer = '';
+  placementSession.orderSelected = [];
+  renderPlacementTest();
+  if (currentPlacementQuestion()?.type === 'typing') setTimeout(() => document.getElementById('placement-answer')?.focus(), 40);
+};
+
+const closePlacementTest = ({ toProgress = false } = {}) => {
+  placementSession = null;
+  modalRoot.innerHTML = '';
+  document.body.style.overflow = '';
+  if (toProgress) navigate('progress');
+};
+
+const renderPlacementSummary = () => {
+  const summary = placementSession.summary;
+  const level = summary.estimatedLevel === 'Pre-A1' ? 'A0' : summary.estimatedLevel;
+  const rows = Object.entries(summary.skillScores || {})
+    .map(([skill, value]) => `
+      <div class="placement-skill-row">
+        <span><strong>${escapeHtml(PLACEMENT_SKILL_LABELS[skill] || skill)}</strong><small>${Math.round(value * 100)}% diagnostic evidence</small></span>
+        <div class="progress-track"><span style="width:${Math.round(value * 100)}%"></span></div>
+      </div>
+    `).join('');
+  const levelRows = ['A0', 'A1', 'A2'].map((band) => {
+    const value = Number(summary.levelScores?.[band] || 0);
+    return `<div class="placement-band-row"><span>${band}</span><div class="progress-track"><span style="width:${Math.round(value * 100)}%"></span></div><b>${Math.round(value * 100)}%</b></div>`;
+  }).join('');
+  return `
+    <main class="placement-stage placement-summary-stage">
+      <section class="card placement-summary-card">
+        <span class="placement-result-icon">${icon('target')}</span>
+        <p class="eyebrow">CONSERVATIVE LEVEL CHECK</p>
+        <h2>Your current estimate is <strong>${escapeHtml(level)}</strong></h2>
+        <p>Blisko measured retrieval across ${Object.keys(summary.skillScores || {}).length} skills. It did not count opened lessons or guessed vocabulary as mastery.</p>
+        <div class="placement-level-meter"><span style="width:${Math.round(summary.score * 100)}%"></span></div>
+        <div class="placement-summary-meta"><span>${Math.round(summary.evidenceConfidence * 100)}% diagnostic coverage</span><span>${summary.answered}/${PLACEMENT_QUESTIONS.length} checks answered</span></div>
+        <div class="placement-band-list"><span class="progress-overline">PERFORMANCE BY DIFFICULTY</span>${levelRows}</div>
+        <div class="placement-skill-list">${rows}</div>
+        <div class="feedback-coach-note">
+          <strong>What happens next</strong>
+          <p>The result calibrates difficulty and progress estimates. Normal practice will gradually outweigh this short diagnostic.</p>
+          ${state.settings.showDutch ? '<small lang="nl">Het resultaat kalibreert de moeilijkheid en voortgangsschatting. Gewone oefeningen wegen na verloop van tijd zwaarder.</small>' : ''}
+        </div>
+      </section>
+    </main>
+    <footer class="placement-footer"><button class="primary-button" type="button" data-action="placement-finish">See calibrated progress ${icon('arrow')}</button></footer>
+  `;
+};
+
+const renderPlacementQuestion = (question) => {
+  const result = placementSession.answerResult;
+  let interaction = '';
+  if (question.type === 'choice' || question.type === 'listening') {
+    interaction = `
+      ${question.type === 'listening' ? `<button class="listen-button placement-listen" type="button" data-action="speak" data-text="${escapeHtml(question.audioText)}" aria-label="Play Polish audio">${icon('volume')}</button>` : ''}
+      <div class="answer-options placement-options">
+        ${question.options.map((option, index) => {
+          const selected = placementSession.selected === option;
+          const correct = normalizeText(option, { loose: true }) === normalizeText(question.answer, { loose: true });
+          const className = placementSession.answered ? (correct ? 'correct' : selected ? 'wrong' : '') : '';
+          return `<button class="answer-option ${className}" type="button" data-action="placement-choice" data-option="${escapeHtml(option)}" ${placementSession.answered ? 'disabled' : ''}><span class="option-letter">${String.fromCharCode(65 + index)}</span><strong>${escapeHtml(option)}</strong></button>`;
+        }).join('')}
+      </div>`;
+  } else if (question.type === 'typing') {
+    interaction = `
+      <form class="answer-input-wrap placement-answer-form" data-action="placement-typing-form">
+        <input id="placement-answer" name="answer" class="answer-input ${placementSession.answered ? result?.correct ? 'correct' : 'wrong' : ''}" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" value="${escapeHtml(placementSession.typedAnswer || '')}" placeholder="Type the Polish sentence…" ${placementSession.answered ? 'disabled' : ''}>
+        <button class="primary-button" type="submit" ${placementSession.answered ? 'disabled' : ''}>Check</button>
+      </form>`;
+  } else if (question.type === 'ordering') {
+    const selectedIds = new Set(placementSession.orderSelected.map((token) => token.id));
+    interaction = `
+      <div class="order-zone placement-order-zone">${placementSession.orderSelected.map((token) => `<button class="word-chip" type="button" data-action="placement-order-remove" data-token="${escapeHtml(token.id)}" ${placementSession.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('') || '<span class="hint-empty-copy">Tap the words in sentence order.</span>'}</div>
+      <div class="order-bank">${question.tokens.filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="placement-order-add" data-token="${escapeHtml(token.id)}" ${placementSession.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('')}</div>
+      <button class="primary-button placement-order-check" type="button" data-action="placement-order-check" ${placementSession.answered || !placementSession.orderSelected.length ? 'disabled' : ''}>Check sentence</button>`;
+  } else {
+    interaction = `
+      <div class="placement-speaking-panel">
+        <button class="record-orb" type="button" data-action="speak" data-text="${escapeHtml(question.audioText)}">${icon('volume')}</button>
+        <strong>Listen once, then say it aloud.</strong>
+        <p>Choose the description that is most honest. This is an early confidence signal, not a pronunciation exam.</p>
+        <div class="placement-speaking-ratings">
+          <button class="secondary-button" type="button" data-action="placement-speaking" data-score="0.18" ${placementSession.answered ? 'disabled' : ''}>Not yet</button>
+          <button class="secondary-button" type="button" data-action="placement-speaking" data-score="0.55" ${placementSession.answered ? 'disabled' : ''}>With effort</button>
+          <button class="primary-button" type="button" data-action="placement-speaking" data-score="0.88" ${placementSession.answered ? 'disabled' : ''}>Comfortable</button>
+        </div>
+      </div>`;
+  }
+
+  const feedback = placementSession.answered ? `
+    <div class="feedback-box ${result?.correct ? 'correct' : 'wrong'} placement-feedback">
+      <div class="feedback-verdict-row"><h4>${escapeHtml(result?.verdict || (result?.correct ? 'Correct' : result?.close ? 'Close' : 'Not yet'))}</h4><span class="feedback-error-chip">${escapeHtml((result?.errorType || 'diagnostic').replaceAll('_', ' '))}</span></div>
+      <p>${escapeHtml(result?.message || '')}</p>
+      ${state.settings.showDutch && result?.messageNl ? `<p class="feedback-secondary" lang="nl">${escapeHtml(result.messageNl)}</p>` : ''}
+      ${question.answer ? `<div class="feedback-model-answer"><span>Model answer</span><strong>${escapeHtml(question.answer)}</strong></div>` : ''}
+    </div>` : '';
+
+  return `
+    <main class="placement-stage">
+      <article class="card placement-question-card">
+        <div class="exercise-eyebrow"><span>${escapeHtml(question.instruction)}</span><span class="exercise-skill">${escapeHtml(PLACEMENT_SKILL_LABELS[question.skill] || question.skill)}</span></div>
+        <p class="placement-level-tag">${escapeHtml(question.level)} evidence · no hints in this calibration</p>
+        <div class="exercise-main-text">${escapeHtml(question.mainText)}</div>
+        ${interaction}
+        ${feedback}
+      </article>
+    </main>
+    <footer class="placement-footer">
+      ${placementSession.answered
+        ? `<button class="primary-button" type="button" data-action="placement-next">${placementSession.index === placementSession.questions.length - 1 ? 'See result' : 'Next check'} ${icon('arrow')}</button>`
+        : `<button class="ghost-button" type="button" data-action="placement-next">I do not know this yet</button>`}
+    </footer>`;
+};
+
+const renderPlacementTest = () => {
+  if (!placementSession) return;
+  const complete = placementSession.index >= placementSession.questions.length && placementSession.summary;
+  modalRoot.innerHTML = `
+    <div class="placement-modal" role="dialog" aria-modal="true" aria-label="Polish level check">
+      <header class="placement-topbar">
+        <button class="icon-button" type="button" data-action="placement-close" aria-label="Close level check">${icon('close')}</button>
+        <div class="session-progress-wrap">
+          <div class="progress-track"><span style="width:${complete ? 100 : Math.round(placementSession.index / placementSession.questions.length * 100)}%"></span></div>
+          <span>${complete ? 'Complete' : `${placementSession.index + 1} / ${placementSession.questions.length}`}</span>
+        </div>
+        <span class="placement-mode-chip">${placementSession.mode === 'recalibration' ? 'Recalibrate' : 'Level check'}</span>
+      </header>
+      ${complete ? renderPlacementSummary() : renderPlacementQuestion(currentPlacementQuestion())}
+    </div>`;
+  hydrateStaticIcons(modalRoot);
+};
+
 const currentExercise = () => session?.exercises?.[session.index] || null;
 
 const HINT_STEP_LABELS = [
@@ -1909,10 +2244,10 @@ const renderExercise = (exercise) => {
 };
 
 const renderExerciseFeedback = (exercise) => {
-  const result = session.answerResult || { correct: true, message: 'Done.' };
+  const result = session.answerResult || { correct: true, message: 'Done.', errorType: 'exact' };
   const feedbackClass = result.correct ? 'correct' : 'wrong';
   const item = ITEM_MAP.get(exercise.itemId);
-  const concept = (item?.grammar || []).map((id) => CONCEPT_MAP.get(id)).find(Boolean);
+  const concept = result.concept || (item?.grammar || []).map((id) => CONCEPT_MAP.get(id)).find(Boolean);
   const testsMeaning = exercise.answerKind === 'meaning'
     || ((exercise.type === 'choice' || exercise.type === 'listening')
       && /choose the meaning/i.test(exercise.instruction || ''));
@@ -1922,13 +2257,23 @@ const renderExerciseFeedback = (exercise) => {
   const hintSummary = session.hintLevel
     ? `<div class="feedback-hint-summary">${icon('lightbulb')} Hint level ${session.hintLevel} used${session.hintRecallCompleted ? ' · active recall completed' : ''}. The next interval will stay appropriately shorter.</div>`
     : '<div class="feedback-hint-summary independent">Retrieved without support.</div>';
+  const verdict = result.verdict || (result.correct ? 'Good retrieval' : result.close ? 'Almost there' : 'Build this memory again');
+  const showModel = !result.correct || !['exact', 'accepted_alternative'].includes(result.errorType || '') || exercise.type === 'speaking';
+  const secondaryFeedback = state.settings.showDutch && result.messageNl
+    ? `<p class="feedback-secondary" lang="nl">${escapeHtml(result.messageNl)}</p>`
+    : '';
+  const errorLabel = (result.errorType || '').replaceAll('_', ' ');
+  const conceptExplanation = concept
+    ? `<div class="feedback-coach-note"><strong>${escapeHtml(concept.title || 'Why this form works')}</strong><p>${escapeHtml(state.settings.showEnglish === false ? concept.nl : concept.en)}</p>${state.settings.showDutch && state.settings.showEnglish && concept.nl ? `<small lang="nl">${escapeHtml(concept.nl)}</small>` : ''}${concept.commonMistake ? `<em>${escapeHtml(concept.commonMistake)}</em>` : ''}</div>`
+    : '';
   return `
     <div class="feedback-box ${feedbackClass}">
-      <h4>${result.correct ? 'Good retrieval' : result.close ? 'Almost there' : 'Build this memory again'}</h4>
+      <div class="feedback-verdict-row"><h4>${escapeHtml(verdict)}</h4>${errorLabel ? `<span class="feedback-error-chip">${escapeHtml(errorLabel)}</span>` : ''}</div>
       <p>${escapeHtml(result.message || '')}</p>
-      ${!result.correct || exercise.type === 'speaking' ? `<span class="feedback-answer">${escapeHtml(exercise.answer)}</span>` : ''}
+      ${secondaryFeedback}
+      ${showModel ? `<div class="feedback-model-answer"><span>Model answer</span><strong>${escapeHtml(result.expected || exercise.answer)}</strong></div>` : ''}
       ${meaningReveal}
-      ${concept ? `<p style="margin-top:7px"><strong>Why:</strong> ${escapeHtml(primaryLanguage() === 'nl' ? concept.nl : concept.en)}</p>` : ''}
+      ${conceptExplanation}
       ${hintSummary}
     </div>
   `;
@@ -2114,14 +2459,14 @@ const checkSessionHintRecall = () => {
     return;
   }
   session.hintRecallValue = value;
-  completeSessionHintRecall(evaluateAnswer(value, currentExercise().answer));
+  completeSessionHintRecall(evaluateExerciseAnswer(value));
 };
 
 const checkSessionHintOrder = () => {
   if (!session || session.answered || session.hintRecallPhase !== 'recall') return;
   const value = session.hintRecallOrderSelected.map((token) => token.value).join(' ');
   if (!value) return;
-  completeSessionHintRecall(evaluateAnswer(value, currentExercise().answer));
+  completeSessionHintRecall(evaluateExerciseAnswer(value));
 };
 
 const completeSessionHintRecallSpeaking = () => {
@@ -2131,7 +2476,7 @@ const completeSessionHintRecallSpeaking = () => {
 const answerChoice = (option) => {
   if (!session || session.answered) return;
   const exercise = currentExercise();
-  const result = evaluateAnswer(option, exercise.answer);
+  const result = evaluateExerciseAnswer(option, exercise);
   session.selectedOption = option;
   session.answerResult = result;
   session.answered = true;
@@ -2148,7 +2493,7 @@ const checkTypedAnswer = () => {
     return;
   }
   session.typedAnswer = value;
-  session.answerResult = evaluateAnswer(value, currentExercise().answer);
+  session.answerResult = evaluateExerciseAnswer(value);
   session.answered = true;
   haptic(session.answerResult.correct ? 8 : [20, 35, 20]);
   renderSession();
@@ -2157,7 +2502,7 @@ const checkTypedAnswer = () => {
 const checkOrderedAnswer = () => {
   if (!session || session.answered) return;
   const value = session.orderSelected.map((token) => token.value).join(' ');
-  session.answerResult = evaluateAnswer(value, currentExercise().answer);
+  session.answerResult = evaluateExerciseAnswer(value);
   session.answered = true;
   haptic(session.answerResult.correct ? 8 : [20, 35, 20]);
   renderSession();
@@ -2230,6 +2575,9 @@ const rateCurrentExercise = (rating, confidenceState = null) => {
     confidenceState,
     adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
     originalExerciseType: exercise.originalExerciseType || null,
+    skillKey: getExerciseSkill(exercise),
+    errorType: result.errorType || null,
+    source: session.mode === 'review' ? 'review session' : 'smart session',
   };
   if (exercise.itemId) reviewItem(state, exercise.itemId, rating, reviewEvidence);
   else if (exercise.patternId) {
@@ -2240,12 +2588,22 @@ const rateCurrentExercise = (rating, confidenceState = null) => {
     }
   }
 
-  const evidenceWeight = getHintEvidenceWeight(session.hintLevel);
-  const almostWeight = confidenceState === 'almost' ? 0.62 : 1;
-  if (exercise.type === 'listening') recordSkillEvidence(state, 'listening', (result.correct ? Math.max(0.65, result.score || 0.8) : result.score || 0.2) * evidenceWeight * almostWeight);
-  if (exercise.type === 'speaking') recordSkillEvidence(state, 'speaking', (confidenceState === 'almost' ? 0.46 : Number(rating) / 3) * evidenceWeight);
-  if (exercise.type === 'typing' || exercise.type === 'ordering') recordSkillEvidence(state, 'grammar', (result.correct ? result.score || 0.8 : result.score || 0.2) * evidenceWeight * almostWeight);
-  recordSkillEvidence(state, 'reading', (result.correct ? 0.8 : 0.3) * evidenceWeight * almostWeight);
+  // Item-specific skill evidence is recorded inside reviewItem so a reading
+  // success never masks weak listening or free production for the same phrase.
+  if (!exercise.itemId) {
+    const evidenceWeight = getHintEvidenceWeight(session.hintLevel);
+    const almostWeight = confidenceState === 'almost' ? 0.62 : 1;
+    const skillKey = getExerciseSkill(exercise);
+    const skillScore = (result.correct ? Math.max(0.65, result.score || Number(rating) / 3) : result.score || 0.2) * evidenceWeight * almostWeight;
+    recordSkillEvidence(state, skillKey, skillScore, {
+      correct: result.correct,
+      hintLevel: session.hintLevel,
+      source: 'pattern practice',
+    });
+    if (exercise.type === 'typing' || exercise.type === 'ordering') {
+      recordSkillEvidence(state, 'grammar', skillScore, { correct: result.correct, hintLevel: session.hintLevel, source: 'pattern practice' });
+    }
+  }
 
   session.results.push({
     itemId: exercise.itemId,
@@ -2741,7 +3099,7 @@ const beginRapidHintRecall = () => {
 const completeRapidAnswer = (value, { activeRecall = false } = {}) => {
   if (!activeGame || activeGame.type !== 'rapid' || activeGame.answered) return;
   const item = activeGame.items[activeGame.index];
-  const result = evaluateAnswer(value, primaryTranslation(item));
+  const result = evaluateAnswer(value, primaryTranslation(item), { language: primaryLanguage(), source: item });
   if (activeRecall && !result.correct && !result.close) {
     activeGame.hintRecallValue = String(value || '');
     activeGame.hintRecallResult = result;
@@ -2822,6 +3180,16 @@ const openSettings = () => {
         <div class="form-field" style="margin-top:12px"><label for="settings-rate">Polish speech speed · ${Math.round(state.settings.speechRate * 100)}%</label><input id="settings-rate" type="range" min="0.55" max="1.05" step="0.05" value="${state.settings.speechRate}"></div>
       </section>
 
+      <section class="settings-section settings-evidence-section">
+        <h3>Level calibration and evidence</h3>
+        <p>Blisko measures reading, listening, guided production, free production, and pronunciation separately. A short diagnostic gives the model a safer starting point; ordinary practice then takes over.</p>
+        <div class="settings-status-card">
+          <span class="settings-status-icon">${icon('target')}</span>
+          <span><strong>${state.onboarding?.placement?.completedAt ? `Last level check: ${escapeHtml(state.onboarding.placement.estimatedLevel === 'Pre-A1' ? 'A0' : state.onboarding.placement.estimatedLevel)}` : 'No level check completed'}</strong><small>${state.onboarding?.placement?.completedAt ? `${formatDateRelative(state.onboarding.placement.completedAt)} · ${Math.round((state.onboarding.placement.evidenceConfidence || 0) * 100)}% diagnostic evidence` : 'Eleven compact questions · about four minutes'}</small></span>
+          <button class="secondary-button compact" type="button" data-action="open-placement" data-mode="${state.onboarding?.placement?.completedAt ? 'recalibration' : 'placement'}">${state.onboarding?.placement?.completedAt ? 'Recalibrate' : 'Start check'}</button>
+        </div>
+      </section>
+
       <section class="settings-section">
         <h3>Optional generative AI</h3>
         <p>The built-in tutor works offline. For open-ended generation, point the app at your own secure server-side proxy. Never put a private model key in browser code.</p>
@@ -2832,7 +3200,12 @@ const openSettings = () => {
         <h3>Appearance and data</h3>
         <div class="form-grid">
           <div class="form-field"><label for="settings-theme">Theme</label><select id="settings-theme"><option value="dark" ${state.settings.theme === 'dark' ? 'selected' : ''}>Dark</option><option value="light" ${state.settings.theme === 'light' ? 'selected' : ''}>Light</option></select></div>
-          <div class="form-field"><label>Local backup</label><div class="button-row"><button class="secondary-button" type="button" data-action="export-data">${icon('download')} Export</button><button class="secondary-button" type="button" data-action="import-data">${icon('upload')} Import</button></div><input id="import-file" class="hidden" type="file" accept="application/json"></div>
+          <div class="form-field"><label>Portable backup</label><div class="button-row"><button class="secondary-button" type="button" data-action="export-data">${icon('download')} Export</button><button class="secondary-button" type="button" data-action="import-data">${icon('upload')} Import</button></div><input id="import-file" class="hidden" type="file" accept="application/json"></div>
+        </div>
+        <div class="settings-status-card app-health-preview">
+          <span class="settings-status-icon">${icon('check')}</span>
+          <span><strong>App health and automatic safety copies</strong><small>Installed build ${escapeHtml(APP_VERSION)} · last safe start ${state.system?.lastSuccessfulStartAt ? formatDateRelative(state.system.lastSuccessfulStartAt) : 'not recorded yet'}</small></span>
+          <button class="secondary-button compact" type="button" data-action="open-health">Inspect</button>
         </div>
         <div class="button-row" style="margin-top:16px"><button class="danger-button" type="button" data-action="reset-data">${icon('trash')} Reset learning data</button></div>
       </section>
@@ -2884,25 +3257,206 @@ const importBackupFile = async (file) => {
   if (!file) return;
   try {
     const raw = await file.text();
+    const report = validateBackup(raw);
+    if (!report.valid) throw new Error(report.issues[0] || 'The file was not a valid Blisko backup.');
+    await createSafetyBackup(state, 'before portable backup import', APP_VERSION);
     state = importState(raw);
+    state.system = state.system || {};
+    state.system.previousVersion = state.system.installedVersion || state.system.previousVersion || null;
+    state.system.installedVersion = APP_VERSION;
+    state.system.lastMigrationAt = new Date().toISOString();
     setTheme(state.settings.theme);
     await save({ immediate: true });
     closeModal();
     updateShell();
     renderView();
-    showToast('Backup restored', 'Your learner model is active again.', 'check');
+    showToast('Backup restored', `${report.itemCount} tracked items validated and restored.`, 'check');
   } catch (error) {
     showToast('Could not import backup', error.message || 'The file was not valid.', 'alert');
   }
 };
 
 const resetLearningData = async () => {
-  if (!window.confirm('Reset all progress, tutor memory, and conversation history on this device?')) return;
+  if (!window.confirm('Reset all progress, tutor memory, and conversation history on this device? A local safety copy will be kept.')) return;
+  await createSafetyBackup(state, 'before learning-data reset', APP_VERSION).catch(() => null);
   state = await resetState();
+  state.system.installedVersion = APP_VERSION;
+  state.system.lastMigrationAt = new Date().toISOString();
+  await save({ immediate: true });
   setTheme(state.settings.theme);
   closeModal();
   navigate('dashboard', { replace: true });
   showToast('Learning data reset', 'You are back at a fresh starting point.', 'trash');
+};
+
+const getActiveServiceWorkerBuild = async () => {
+  if (!navigator.serviceWorker?.controller) return null;
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timeout = setTimeout(() => resolve('unknown'), 700);
+    channel.port1.onmessage = (event) => {
+      clearTimeout(timeout);
+      resolve(event.data?.build || 'unknown');
+    };
+    try {
+      navigator.serviceWorker.controller.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
+    } catch {
+      clearTimeout(timeout);
+      resolve('unknown');
+    }
+  });
+};
+
+const openAppHealth = async () => {
+  try {
+    const [health, backups, workerBuild] = await Promise.all([
+      getStorageHealth(state),
+      listSafetyBackups(),
+      getActiveServiceWorkerBuild(),
+    ]);
+    appHealthSnapshot = { ...health, backups, workerBuild };
+    const stateAligned = !state.system?.installedVersion || state.system.installedVersion === APP_VERSION;
+    const workerAligned = workerBuild === null || workerBuild === APP_VERSION;
+    const versionAligned = stateAligned && workerAligned;
+    const storageSafe = health.indexedDbAvailable || health.localFallbackAvailable;
+    const statusItems = [
+      { label: 'Code and learner model', value: stateAligned ? `Aligned on ${APP_VERSION}` : `Code ${APP_VERSION} · state ${state.system?.installedVersion || 'unknown'}`, ok: stateAligned },
+      { label: 'Verified offline shell', value: workerBuild === null ? 'Not controlling this page yet' : workerBuild === 'unknown' ? 'Version could not be read' : `Build ${workerBuild}`, ok: workerAligned && workerBuild !== 'unknown', neutral: workerBuild === null || workerBuild === 'unknown' },
+      { label: 'Primary storage', value: health.indexedDbAvailable ? 'IndexedDB available' : 'IndexedDB unavailable', ok: health.indexedDbAvailable },
+      { label: 'Fallback storage', value: health.localFallbackAvailable ? 'localStorage available' : 'Fallback unavailable', ok: health.localFallbackAvailable },
+      { label: 'Protected from cleanup', value: health.persisted ? 'Persistent storage granted' : 'Browser-managed storage', ok: health.persisted, neutral: true },
+    ];
+    openModal(`
+      <header class="modal-header">
+        <div><h2>App health and safety</h2><p>Check version alignment, local storage, recovery copies, and update readiness without deleting your learning data.</p></div>
+        <button class="modal-close" type="button" data-action="modal-close" aria-label="Close">${icon('close')}</button>
+      </header>
+      <div class="modal-body app-health-body">
+        <section class="health-hero ${versionAligned && storageSafe ? 'healthy' : 'attention'}">
+          <span class="health-hero-icon">${icon(versionAligned && storageSafe ? 'check' : 'alert')}</span>
+          <div><p class="eyebrow">BLISKO ${escapeHtml(APP_VERSION)}</p><h3>${versionAligned && storageSafe ? 'The app and learner model are aligned.' : 'One part of the app needs attention.'}</h3><p>${versionAligned && storageSafe ? 'Updates can replace app files while progress remains in local storage.' : 'Use the repair action below if the interface is incomplete or an update mixed old and new files.'}</p></div>
+        </section>
+
+        <section class="health-status-grid">
+          ${statusItems.map((item) => `<div class="health-status-row ${item.ok ? 'ok' : item.neutral ? 'neutral' : 'warning'}"><span>${icon(item.ok ? 'check' : item.neutral ? 'info' : 'alert')}</span><p><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.value)}</small></p></div>`).join('')}
+        </section>
+
+        <section class="settings-section health-backup-section">
+          <div class="section-heading"><div><h3>Automatic safety copies</h3><p>Blisko keeps rotating local snapshots before migrations and at least once per day. These are separate from the portable JSON export.</p></div><button class="secondary-button compact" type="button" data-action="create-safety-backup">Create now</button></div>
+          ${backups.length ? `<div class="health-backup-list">${backups.map((backup, index) => `<div class="health-backup-row"><span class="health-backup-index">${index + 1}</span><p><strong>${escapeHtml(backup.reason || 'Safety copy')}</strong><small>${formatDateTime(backup.createdAt)} · build ${escapeHtml(backup.appVersion || 'unknown')} · ${backup.itemCount} tracked items</small></p>${index === 0 ? '<span class="soft-pill">Latest</span>' : ''}</div>`).join('')}</div>` : '<div class="empty-state compact-empty"><span class="empty-state-icon">' + icon('download') + '</span><h3>No safety copy yet</h3><p>Create one now or keep using the app; an automatic copy is made before the next migration.</p></div>'}
+          <div class="health-action-row">
+            <button class="secondary-button" type="button" data-action="restore-safety-backup" ${backups.length ? '' : 'disabled'}>${icon('repeat')} Restore latest safety copy</button>
+            <button class="secondary-button" type="button" data-action="export-data">${icon('download')} Export portable backup</button>
+          </div>
+        </section>
+
+        <section class="settings-section health-repair-section">
+          <h3>Update repair</h3>
+          <p>This clears only downloaded app-shell files and service workers, then fetches one matching version again. Vocabulary, reviews, streaks, conversations, and settings remain untouched.</p>
+          <button class="danger-outline-button" type="button" data-action="repair-app-cache">${icon('repeat')} Repair downloaded app files</button>
+        </section>
+
+        <section class="health-footnote">
+          <span>${icon('info')}</span><p><strong>Last successful start</strong><small>${health.lastSuccessfulStartAt ? formatDateTime(health.lastSuccessfulStartAt) : 'This build has not yet recorded a complete start.'} · schema ${health.schemaVersion}</small></p>
+        </section>
+      </div>
+      <footer class="modal-footer"><button class="primary-button" type="button" data-action="modal-close">Done</button></footer>
+    `, { wide: true, label: 'App health and safety' });
+  } catch (error) {
+    showToast('Health check unavailable', error.message || 'Storage information could not be read.', 'alert');
+  }
+};
+
+const createManualSafetyBackup = async () => {
+  try {
+    await createSafetyBackup(state, 'manual safety copy', APP_VERSION);
+    await save({ immediate: true });
+    showToast('Safety copy created', 'A local recovery snapshot is ready on this device.', 'check');
+    await openAppHealth();
+  } catch (error) {
+    showToast('Could not create safety copy', error.message || 'The browser blocked local storage.', 'alert');
+  }
+};
+
+const restoreLatestLocalBackup = async () => {
+  const backups = appHealthSnapshot?.backups || await listSafetyBackups();
+  if (!backups.length) {
+    showToast('No safety copy available', 'Create a safety copy or import a portable backup instead.', 'alert');
+    return;
+  }
+  const latest = backups[0];
+  if (!window.confirm(`Restore the safety copy from ${formatDateTime(latest.createdAt)}? Current changes made after that copy will be replaced.`)) return;
+  try {
+    const restored = await restoreLatestSafetyBackup();
+    restored.system = restored.system || {};
+    restored.system.previousVersion = restored.system.installedVersion || restored.system.previousVersion || null;
+    restored.system.installedVersion = APP_VERSION;
+    restored.system.lastMigrationAt = new Date().toISOString();
+    state = restored;
+    await save({ immediate: true });
+    closeModal();
+    showToast('Safety copy restored', 'Blisko will reopen with the recovered learner model.', 'check');
+    setTimeout(() => location.reload(), 350);
+  } catch (error) {
+    showToast('Restore failed', error.message || 'The local safety copy could not be read.', 'alert');
+  }
+};
+
+const currentAppCacheScope = () => new URL('./', location.href).href;
+
+const currentAppCachePrefix = () => {
+  const path = new URL('./', location.href).pathname;
+  const key = path
+    .replace(/^\/+|\/+$/g, '')
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .toLowerCase() || 'root';
+  return `blisko-${key}-`;
+};
+
+const clearCurrentAppCaches = async () => {
+  if (!('caches' in window)) return;
+  const names = await caches.keys();
+  const prefix = currentAppCachePrefix();
+  const scope = currentAppCacheScope();
+  await Promise.all(names.map(async (name) => {
+    if (name.startsWith(prefix)) {
+      await caches.delete(name);
+      return;
+    }
+    // Clean entries from origin-wide legacy caches without touching another
+    // GitHub Pages repository that happens to share the same origin.
+    if (/^blisko-(?:shell-flat|runtime)-v/i.test(name)) {
+      const cache = await caches.open(name);
+      const requests = await cache.keys();
+      await Promise.all(requests
+        .filter((request) => request.url.startsWith(scope))
+        .map((request) => cache.delete(request)));
+      if (!(await cache.keys()).length) await caches.delete(name);
+    }
+  }));
+};
+
+const repairAppCache = async () => {
+  if (!window.confirm('Repair downloaded app files? Your learning data will stay on this device.')) return;
+  try {
+    await createSafetyBackup(state, 'before app-file repair', APP_VERSION);
+    await save({ immediate: true });
+    await flushState();
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      const currentUrl = location.href;
+      const relevantRegistrations = registrations.filter((registration) => currentUrl.startsWith(registration.scope));
+      await Promise.all(relevantRegistrations.map((registration) => registration.unregister()));
+    }
+    await clearCurrentAppCaches();
+    const url = new URL(location.href);
+    url.searchParams.set('repair', APP_VERSION);
+    url.searchParams.set('t', Date.now().toString());
+    url.hash = `#${currentView || 'dashboard'}`;
+    location.replace(url.toString());
+  } catch (error) {
+    showToast('Repair could not finish', error.message || 'Reload the hosted page once while online.', 'alert');
+  }
 };
 
 const openWordDetail = (wordId) => {
@@ -3217,7 +3771,12 @@ const answerTutorExercise = (key, value, { activeRecall = false } = {}) => {
   }
   const answer = String(value || '').trim();
   if (!answer) return;
-  const result = evaluateAnswer(answer, exercise.answer || '');
+  const result = evaluateAnswer(answer, exercise.answer || '', {
+    language: /[ąćęłńóśźż]/i.test(exercise.answer || '') ? 'pl' : primaryLanguage(),
+    acceptedAnswers: exercise.acceptedAnswers || [],
+    grammar: exercise.grammar || [],
+    exercise,
+  });
   if (activeRecall && !result.correct && !result.close) {
     exerciseState.recallValue = answer;
     exerciseState.recallResult = result;
@@ -3362,8 +3921,60 @@ const handleAction = (event) => {
     case 'tutor-almost':
       markTutorAlmostKnown(target.dataset.key || '');
       break;
+    case 'open-placement':
+      openPlacementTest(target.dataset.mode || (state.onboarding?.placement?.completedAt ? 'recalibration' : 'placement'));
+      break;
+    case 'placement-choice':
+      recordPlacementAnswer(target.dataset.option || '');
+      break;
+    case 'placement-order-add': {
+      const question = currentPlacementQuestion();
+      const token = question?.tokens?.find((entry) => entry.id === target.dataset.token);
+      if (token && placementSession && !placementSession.answered && !placementSession.orderSelected.some((entry) => entry.id === token.id)) {
+        placementSession.orderSelected.push(token);
+        renderPlacementTest();
+      }
+      break;
+    }
+    case 'placement-order-remove':
+      if (placementSession && !placementSession.answered) {
+        placementSession.orderSelected = placementSession.orderSelected.filter((entry) => entry.id !== target.dataset.token);
+        renderPlacementTest();
+      }
+      break;
+    case 'placement-order-check':
+      if (placementSession?.orderSelected?.length) {
+        recordPlacementAnswer(placementSession.orderSelected.map((entry) => entry.value).join(' '));
+      }
+      break;
+    case 'placement-speaking':
+      recordPlacementAnswer('', { score: Number(target.dataset.score || 0), selfRated: true });
+      break;
+    case 'placement-next':
+      advancePlacementTest();
+      break;
+    case 'placement-close': {
+      const incomplete = placementSession && !placementSession.summary && placementSession.results.length > 0;
+      if (!incomplete || window.confirm('Leave this level check? Your answers in this unfinished check will not be saved.')) closePlacementTest();
+      break;
+    }
+    case 'placement-finish':
+      closePlacementTest({ toProgress: true });
+      break;
     case 'open-settings':
       openSettings();
+      break;
+    case 'open-health':
+      openAppHealth();
+      break;
+    case 'create-safety-backup':
+      createManualSafetyBackup();
+      break;
+    case 'restore-safety-backup':
+      restoreLatestLocalBackup();
+      break;
+    case 'repair-app-cache':
+      repairAppCache();
       break;
     case 'modal-close':
       closeModal();
@@ -3518,6 +4129,10 @@ const handleSubmit = (event) => {
   if (form.dataset.action === 'hint-recall-form') checkSessionHintRecall();
   if (form.dataset.action === 'tutor-hint-recall-form') submitTutorHintRecall(form);
   if (form.dataset.action === 'rapid-hint-recall-form') submitRapidHintRecall(form);
+  if (form.dataset.action === 'placement-typing-form') {
+    const answer = new FormData(form).get('answer') || '';
+    recordPlacementAnswer(String(answer));
+  }
 };
 
 const updateLibraryList = () => {
@@ -3538,6 +4153,9 @@ const handleInput = (event) => {
   if (event.target.id === 'hint-recall-answer' && session && !session.answered) {
     session.hintRecallValue = event.target.value;
   }
+  if (event.target.id === 'placement-answer' && placementSession && !placementSession.answered) {
+    placementSession.typedAnswer = event.target.value;
+  }
 };
 
 const handleChange = (event) => {
@@ -3553,7 +4171,10 @@ const handleChange = (event) => {
 const handleKeydown = (event) => {
   if (event.key === 'Escape') {
     if (session) closeSession();
-    else if (modalRoot.innerHTML) closeModal();
+    else if (placementSession) {
+      const incomplete = !placementSession.summary && placementSession.results.length > 0;
+      if (!incomplete || window.confirm('Leave this level check? Your answers in this unfinished check will not be saved.')) closePlacementTest();
+    } else if (modalRoot.innerHTML) closeModal();
     return;
   }
   if (event.key === 'Enter' && !event.shiftKey && event.target.id === 'conversation-input') {
@@ -3569,24 +4190,26 @@ const handleKeydown = (event) => {
 const registerServiceWorker = async () => {
   if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
   try {
-    const reloadKey = 'blisko-sw-reload-v1.2.2';
+    const reloadKey = `blisko-sw-reload-v${APP_VERSION}`;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (sessionStorage.getItem(reloadKey)) return;
       sessionStorage.setItem(reloadKey, '1');
       location.reload();
     });
-    const registration = await navigator.serviceWorker.register('./sw.js?v=1.2.2');
+    const registration = await navigator.serviceWorker.register(`./sw.js?v=${APP_VERSION}`, { updateViaCache: 'none' });
     if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     registration.addEventListener('updatefound', () => {
       const worker = registration.installing;
       worker?.addEventListener('statechange', () => {
         if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-          showToast('Offline app updated', 'The newest version will be used on your next launch.', 'download');
+          showToast('Verified update ready', 'All app files were downloaded as one matching build. Blisko will restart once.', 'download');
+          worker.postMessage({ type: 'SKIP_WAITING' });
         }
       });
     });
+    registration.update().catch(() => null);
   } catch {
-    showToast('Offline installation unavailable', 'The app still works, but this browser could not register the cache.', 'alert');
+    showToast('Offline installation unavailable', 'The app still works, but this browser could not register the verified offline build.', 'alert');
   }
 };
 
@@ -3635,7 +4258,14 @@ const repairKnownTutorMisroutes = () => {
 };
 
 const initialize = async () => {
-  state = await loadState();
+  state = await loadState({ appVersion: APP_VERSION });
+  await save({ immediate: true });
+  try {
+    const automaticBackup = await ensureAutomaticBackup(state, { appVersion: APP_VERSION });
+    if (automaticBackup) await save({ immediate: true });
+  } catch {
+    // A blocked safety copy must never block the learning app.
+  }
   if (repairKnownTutorMisroutes()) await save({ immediate: true });
   setTheme(state.settings.theme || 'dark');
   const initialHash = location.hash.replace('#', '');
@@ -3680,6 +4310,7 @@ const initialize = async () => {
   registerServiceWorker();
   updateConnectionStatus();
   document.documentElement.dataset.bliskoReady = 'true';
+  markStartupHealthy(state, APP_VERSION).catch(() => false);
 
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => false);
 };

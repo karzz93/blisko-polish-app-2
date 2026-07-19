@@ -5,8 +5,8 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.2.2';
-import { getTodayKey } from './storage.js?v=1.2.2';
+} from './data.js?v=1.3.0';
+import { getTodayKey } from './storage.js?v=1.3.0';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -193,29 +193,344 @@ export const similarity = (a, b) => {
   return 1 - distance / Math.max(left.length, right.length, 1);
 };
 
-export const evaluateAnswer = (input, expected) => {
-  const exactInput = normalizeText(input);
-  const exactExpected = normalizeText(expected);
-  const looseInput = normalizeText(input, { loose: true });
-  const looseExpected = normalizeText(expected, { loose: true });
-  const exact = exactInput === exactExpected;
-  const diacriticsOnly = !exact && looseInput === looseExpected;
-  const score = similarity(input, expected);
-  const correct = exact || diacriticsOnly || score >= 0.9;
-  const close = !correct && score >= 0.68;
+const OPTIONAL_SUBJECT_PRONOUNS = new Set(['ja', 'ty', 'on', 'ona', 'ono', 'my', 'wy', 'oni', 'one']);
+
+const answerTokens = (value = '') => normalizeText(value)
+  .split(' ')
+  .filter(Boolean);
+
+const sameTokenBag = (left = '', right = '') => {
+  const a = answerTokens(left).sort();
+  const b = answerTokens(right).sort();
+  return a.length > 1 && a.length === b.length && a.every((token, index) => token === b[index]);
+};
+
+// Polish permits substantial reordering, but small grammatical chunks are
+// not free to scatter. In particular, a preposition must stay with the form it
+// governs and negation normally stays directly with the predicate. This keeps
+// the evaluator from accepting a random word scramble merely because all
+// tokens are present.
+const POLISH_FIXED_CHUNK_HEADS = new Set([
+  'bez', 'dla', 'do', 'ku', 'na', 'nad', 'nie', 'o', 'od', 'po', 'pod', 'przed',
+  'przez', 'przy', 'u', 'w', 'we', 'z', 'za', 'ze',
+]);
+
+const preservesPolishChunks = (input = '', expected = '') => {
+  const inputTokens = answerTokens(input);
+  const expectedTokens = answerTokens(expected);
+  const fixedPairs = expectedTokens
+    .map((token, index) => [token, expectedTokens[index + 1]])
+    .filter(([head, tail]) => POLISH_FIXED_CHUNK_HEADS.has(head) && tail);
+  return fixedPairs.every(([head, tail]) => inputTokens.some((token, index) => (
+    token === head && inputTokens[index + 1] === tail
+  )));
+};
+
+const withoutOptionalSubject = (value = '') => {
+  const tokens = answerTokens(value);
+  if (OPTIONAL_SUBJECT_PRONOUNS.has(tokens[0])) tokens.shift();
+  return tokens.join(' ');
+};
+
+const uniqueAnswers = (answers = []) => answers
+  .map((value) => String(value || '').trim())
+  .filter(Boolean)
+  .filter((value, index, array) => array.findIndex((candidate) => normalizeText(candidate) === normalizeText(value)) === index);
+
+const genderCounterparts = (answer = '') => {
+  const swaps = [
+    [/\bchciałbym\b/gi, 'chciałabym'],
+    [/\bchciałabym\b/gi, 'chciałbym'],
+    [/\bbyłem\b/gi, 'byłam'],
+    [/\bbyłam\b/gi, 'byłem'],
+    [/\bzrobiłem\b/gi, 'zrobiłam'],
+    [/\bzrobiłam\b/gi, 'zrobiłem'],
+    [/\bzapomniałem\b/gi, 'zapomniałam'],
+    [/\bzapomniałam\b/gi, 'zapomniałem'],
+  ];
+  return swaps
+    .filter(([pattern]) => pattern.test(answer))
+    .map(([pattern, replacement]) => answer.replace(pattern, replacement));
+};
+
+const differenceCounts = (inputTokens, expectedTokens) => {
+  const inputCounts = new Map();
+  const expectedCounts = new Map();
+  inputTokens.forEach((token) => inputCounts.set(token, (inputCounts.get(token) || 0) + 1));
+  expectedTokens.forEach((token) => expectedCounts.set(token, (expectedCounts.get(token) || 0) + 1));
+  const missing = [];
+  const extra = [];
+  expectedCounts.forEach((count, token) => {
+    const delta = count - (inputCounts.get(token) || 0);
+    for (let index = 0; index < delta; index += 1) missing.push(token);
+  });
+  inputCounts.forEach((count, token) => {
+    const delta = count - (expectedCounts.get(token) || 0);
+    for (let index = 0; index < delta; index += 1) extra.push(token);
+  });
+  return { missing, extra };
+};
+
+const commonPrefixLength = (left = '', right = '') => {
+  let index = 0;
+  while (index < left.length && index < right.length && left[index] === right[index]) index += 1;
+  return index;
+};
+
+const likelyEndingDifference = (inputToken = '', expectedToken = '') => {
+  const left = stripDiacritics(inputToken.toLowerCase());
+  const right = stripDiacritics(expectedToken.toLowerCase());
+  if (!left || !right || left === right) return false;
+  const prefix = commonPrefixLength(left, right);
+  const minimum = Math.min(left.length, right.length);
+  return minimum >= 4 && prefix >= Math.max(2, minimum - 3) && levenshtein(left, right) <= 3;
+};
+
+const getConceptFeedback = (context = {}) => {
+  const ids = context.grammar || context.exercise?.grammar || context.source?.grammar || [];
+  const concept = ids.map((id) => CONCEPT_MAP.get(id)).find(Boolean);
+  return concept ? {
+    id: concept.id,
+    title: concept.title,
+    en: concept.en,
+    nl: concept.nl,
+    commonMistake: concept.mistakes?.[0] || '',
+  } : null;
+};
+
+const inferAnswerLanguage = (expected, context = {}) => {
+  if (context.language) return context.language;
+  if (context.answerKind === 'polish' || context.exercise?.answerKind === 'polish') return 'pl';
+  if (/[ąćęłńóśźż]/i.test(expected)) return 'pl';
+  return 'support';
+};
+
+export const evaluateAnswer = (input, expected, context = {}) => {
+  const rawInput = String(input || '').trim();
+  const rawExpected = String(expected || '').trim();
+  const language = inferAnswerLanguage(rawExpected, context);
+  const suppliedAlternatives = [
+    ...(context.acceptedAnswers || []),
+    ...(context.alternatives || []),
+    ...(context.exercise?.acceptedAnswers || []),
+    ...(context.source?.acceptedAnswers || []),
+    ...(context.source?.alternatives || []),
+  ];
+  const variants = uniqueAnswers([
+    rawExpected,
+    ...suppliedAlternatives,
+    ...(language === 'pl' ? genderCounterparts(rawExpected) : []),
+  ]);
+  const concept = getConceptFeedback(context);
+
+  if (!rawInput) {
+    return {
+      correct: false,
+      close: false,
+      exact: false,
+      diacriticsOnly: false,
+      score: 0,
+      errorType: 'empty',
+      verdict: 'No answer yet',
+      message: 'Make a rough attempt first. Even an imperfect answer gives the coach useful evidence.',
+      messageNl: 'Doe eerst een ruwe poging. Ook een onvolmaakt antwoord geeft de coach nuttige informatie.',
+      expected: rawExpected,
+      concept,
+    };
+  }
+
+  const exactInput = normalizeText(rawInput);
+  const looseInput = normalizeText(rawInput, { loose: true });
+  const ranked = variants
+    .map((variant) => ({
+      variant,
+      exact: exactInput === normalizeText(variant),
+      diacriticsOnly: exactInput !== normalizeText(variant) && looseInput === normalizeText(variant, { loose: true }),
+      score: similarity(rawInput, variant),
+    }))
+    .sort((left, right) => Number(right.exact) - Number(left.exact)
+      || Number(right.diacriticsOnly) - Number(left.diacriticsOnly)
+      || right.score - left.score);
+  const best = ranked[0] || { variant: rawExpected, exact: false, diacriticsOnly: false, score: 0 };
+  const expectedTokens = answerTokens(best.variant);
+  const inputTokens = answerTokens(rawInput);
+  const exact = best.exact;
+  const diacriticsOnly = best.diacriticsOnly;
+  const isAlternative = normalizeText(best.variant) !== normalizeText(rawExpected);
+
+  if (exact || isAlternative && exact) {
+    return {
+      correct: true,
+      close: false,
+      exact: !isAlternative,
+      diacriticsOnly: false,
+      score: 1,
+      errorType: isAlternative ? 'accepted_alternative' : 'exact',
+      verdict: isAlternative ? 'Natural alternative accepted' : 'Natural and correct',
+      message: isAlternative
+        ? 'That is a valid way to express the same intention. Blisko accepted it rather than forcing one model sentence.'
+        : 'Natural and correct.',
+      messageNl: isAlternative
+        ? 'Dit is een geldige manier om dezelfde bedoeling uit te drukken. Blisko dwingt niet één modelzin af.'
+        : 'Natuurlijk en correct.',
+      expected: rawExpected,
+      acceptedAnswer: best.variant,
+      concept,
+    };
+  }
+
+  if (diacriticsOnly) {
+    return {
+      correct: true,
+      close: false,
+      exact: false,
+      diacriticsOnly: true,
+      score: 0.97,
+      errorType: 'diacritics',
+      verdict: 'Correct, with Polish letters to polish',
+      message: 'The sentence is correct. Add the Polish letters when you can; they carry useful sound and spelling information.',
+      messageNl: 'De zin is correct. Voeg waar mogelijk de Poolse letters toe; ze geven belangrijke klank- en spellinginformatie.',
+      expected: rawExpected,
+      acceptedAnswer: best.variant,
+      concept,
+    };
+  }
+
+  if (language === 'pl' && sameTokenBag(rawInput, best.variant) && preservesPolishChunks(rawInput, best.variant)) {
+    return {
+      correct: true,
+      close: false,
+      exact: false,
+      diacriticsOnly: false,
+      score: 0.93,
+      errorType: 'word_order',
+      verdict: 'Correct words, different emphasis',
+      message: `Polish word order is flexible. Your version is understandable; the neutral model order is “${rawExpected}”.`,
+      messageNl: `De Poolse woordvolgorde is flexibel. Jouw versie is begrijpelijk; de neutrale modelvolgorde is “${rawExpected}”.`,
+      expected: rawExpected,
+      acceptedAnswer: rawInput,
+      concept,
+    };
+  }
+
+  if (language === 'pl') {
+    const inputWithoutSubject = withoutOptionalSubject(rawInput);
+    const expectedWithoutSubject = withoutOptionalSubject(best.variant);
+    if (inputWithoutSubject && inputWithoutSubject === expectedWithoutSubject
+      && normalizeText(rawInput) !== normalizeText(best.variant)) {
+      return {
+        correct: true,
+        close: false,
+        exact: false,
+        diacriticsOnly: false,
+        score: 0.95,
+        errorType: 'pronoun_emphasis',
+        verdict: 'Correct, with a different emphasis',
+        message: 'Polish often drops the subject pronoun because the verb ending already identifies the person. Keeping it is correct when you want emphasis.',
+        messageNl: 'Pools laat het onderwerp vaak weg omdat de werkwoordsuitgang de persoon al aangeeft. Het voornaamwoord behouden is correct als je nadruk wilt leggen.',
+        expected: rawExpected,
+        acceptedAnswer: rawInput,
+        concept: concept || getConceptFeedback({ grammar: ['pronoun_drop'] }),
+      };
+    }
+  }
+
+  const score = best.score;
+  const { missing, extra } = differenceCounts(inputTokens, expectedTokens);
+  const alignedDifferences = inputTokens.length === expectedTokens.length
+    ? inputTokens.map((token, index) => ({ input: token, expected: expectedTokens[index] })).filter((pair) => pair.input !== pair.expected)
+    : [];
+  const endingPairs = alignedDifferences.filter((pair) => likelyEndingDifference(pair.input, pair.expected));
+  const minorTypo = score >= (language === 'pl' ? 0.97 : 0.95);
+
+  if (minorTypo) {
+    return {
+      correct: true,
+      close: false,
+      exact: false,
+      diacriticsOnly: false,
+      score,
+      errorType: 'minor_spelling',
+      verdict: 'Meaning recovered; tiny spelling repair',
+      message: `Your answer clearly recovered the sentence. Compare the spelling with “${best.variant}”.`,
+      messageNl: `Je antwoord haalde de zin duidelijk terug. Vergelijk de spelling met “${best.variant}”.`,
+      expected: rawExpected,
+      acceptedAnswer: best.variant,
+      concept,
+    };
+  }
+
+  if (endingPairs.length && endingPairs.length >= Math.max(1, alignedDifferences.length - 1)) {
+    const pair = endingPairs[0];
+    return {
+      correct: false,
+      close: true,
+      exact: false,
+      diacriticsOnly: false,
+      score: Math.max(score, 0.7),
+      errorType: 'ending',
+      verdict: 'The sentence frame is right; an ending changed',
+      message: `You chose the right idea. Compare “${pair.input}” with “${pair.expected}”. In Polish, that ending often signals case, gender, number, or person.`,
+      messageNl: `Je koos de juiste bedoeling. Vergelijk “${pair.input}” met “${pair.expected}”. In het Pools geeft die uitgang vaak naamval, geslacht, getal of persoon aan.`,
+      expected: rawExpected,
+      acceptedAnswer: best.variant,
+      differences: endingPairs,
+      concept,
+    };
+  }
+
+  if (missing.length && !extra.length && missing.length <= 2) {
+    return {
+      correct: false,
+      close: true,
+      exact: false,
+      diacriticsOnly: false,
+      score: Math.max(score, 0.62),
+      errorType: 'missing_word',
+      verdict: 'Almost complete',
+      message: `The intention is clear, but ${missing.length === 1 ? 'one word is' : 'two words are'} missing: ${missing.join(', ')}.`,
+      messageNl: `De bedoeling is duidelijk, maar ${missing.length === 1 ? 'één woord ontbreekt' : 'twee woorden ontbreken'}: ${missing.join(', ')}.`,
+      expected: rawExpected,
+      missing,
+      concept,
+    };
+  }
+
+  if (extra.length && !missing.length && extra.length <= 2) {
+    return {
+      correct: false,
+      close: true,
+      exact: false,
+      diacriticsOnly: false,
+      score: Math.max(score, 0.62),
+      errorType: 'extra_word',
+      verdict: 'The core sentence is there',
+      message: `The main sentence is present, but ${extra.length === 1 ? 'this extra word changes the shape' : 'these extra words change the shape'}: ${extra.join(', ')}.`,
+      messageNl: `De kernzin staat er, maar ${extra.length === 1 ? 'dit extra woord verandert de vorm' : 'deze extra woorden veranderen de vorm'}: ${extra.join(', ')}.`,
+      expected: rawExpected,
+      extra,
+      concept,
+    };
+  }
+
+  const close = score >= (language === 'pl' ? 0.64 : 0.68);
   return {
-    correct,
+    correct: false,
     close,
-    exact,
-    diacriticsOnly,
+    exact: false,
+    diacriticsOnly: false,
     score,
-    message: exact
-      ? 'Natural and correct.'
-      : diacriticsOnly
-        ? 'Correct meaning. Add the Polish letters when you can.'
-        : close
-          ? 'Very close—compare the ending and word order.'
-          : 'Not yet. Notice the whole phrase, especially the ending.',
+    errorType: close ? 'spelling_or_form' : 'different_answer',
+    verdict: close ? 'Very close' : 'Build the whole speaking block again',
+    message: close
+      ? `Your answer is close. Compare the full form with “${best.variant}”, especially the changed word or ending.`
+      : 'The intended meaning is not clear enough yet. Study the whole phrase as one useful speaking block.',
+    messageNl: close
+      ? `Je antwoord zit dichtbij. Vergelijk de volledige vorm met “${best.variant}”, vooral het veranderde woord of de uitgang.`
+      : 'De bedoelde betekenis is nog niet duidelijk genoeg. Leer de hele zin als één bruikbaar spreekblok.',
+    expected: rawExpected,
+    acceptedAnswer: best.variant,
+    concept,
   };
 };
 
@@ -670,6 +985,88 @@ export const generateTutorExerciseHint = (exercise, level = 1, { partialIndex = 
   return hint;
 };
 
+
+export const ITEM_SKILL_KEYS = ['reading', 'listening', 'guidedProduction', 'freeProduction', 'pronunciation'];
+
+const createItemSkillEntry = () => ({
+  attempts: 0,
+  correct: 0,
+  incorrect: 0,
+  score: 0,
+  confidence: 0,
+  hintsUsed: 0,
+  lastAt: null,
+});
+
+const ensureItemSkills = (progress) => {
+  progress.skills = progress.skills || {};
+  ITEM_SKILL_KEYS.forEach((key) => {
+    const saved = progress.skills[key] || {};
+    progress.skills[key] = {
+      ...createItemSkillEntry(),
+      ...saved,
+      attempts: Number(saved.attempts || 0),
+      correct: Number(saved.correct || 0),
+      incorrect: Number(saved.incorrect || 0),
+      score: clamp(Number(saved.score ?? saved.confidence ?? 0)),
+      confidence: clamp(Number(saved.confidence ?? saved.score ?? 0)),
+      hintsUsed: Number(saved.hintsUsed || 0),
+    };
+  });
+  return progress.skills;
+};
+
+export const getExerciseSkill = (exercise = {}) => {
+  if (exercise.skillKey && ITEM_SKILL_KEYS.includes(exercise.skillKey)) return exercise.skillKey;
+  if (exercise.type === 'listening' || exercise.direction === 'audio-to-meaning') return 'listening';
+  if (exercise.type === 'speaking' || exercise.answerKind === 'speech') return 'pronunciation';
+  if (exercise.type === 'typing') return 'freeProduction';
+  if (exercise.type === 'ordering') return 'guidedProduction';
+  if (exercise.type === 'choice' && exercise.direction === 'meaning-to-pl') return 'guidedProduction';
+  return 'reading';
+};
+
+export const getItemSkillProfile = (progress = null) => {
+  if (!progress) return Object.fromEntries(ITEM_SKILL_KEYS.map((key) => [key, createItemSkillEntry()]));
+  return ensureItemSkills(progress);
+};
+
+export const getWeakestItemSkill = (progress = null) => {
+  if (!progress) return null;
+  const skills = ensureItemSkills(progress);
+  const attempted = ITEM_SKILL_KEYS.filter((key) => Number(skills[key].attempts || 0) > 0);
+  if (!attempted.length) return null;
+  return attempted
+    .map((key) => ({ key, value: skills[key].confidence + Math.min(0.08, skills[key].attempts * 0.006) }))
+    .sort((left, right) => left.value - right.value)[0]?.key || null;
+};
+
+export const recordItemSkillEvidence = (state, itemId, skill, score, {
+  correct = true,
+  hintLevel = 0,
+  confidenceState = null,
+  source = 'practice',
+} = {}) => {
+  if (!itemId || !ITEM_MAP.has(itemId) || !ITEM_SKILL_KEYS.includes(skill)) return null;
+  const progress = ensureItemProgress(state, itemId);
+  const entry = ensureItemSkills(progress)[skill];
+  const safeScore = clamp(Number(score) || 0);
+  const safeHintLevel = clamp(Math.round(Number(hintLevel) || 0), 0, 5);
+  const evidenceWeight = getHintEvidenceWeight(safeHintLevel) * (confidenceState === 'almost' ? 0.72 : 1);
+  const weightedScore = clamp(safeScore * evidenceWeight);
+  const blend = entry.attempts < 3 ? 0.34 : 0.2;
+  entry.attempts += 1;
+  entry.correct += correct ? 1 : 0;
+  entry.incorrect += correct ? 0 : 1;
+  entry.score = clamp(entry.score * (1 - blend) + weightedScore * blend);
+  entry.confidence = clamp(entry.confidence * 0.76 + weightedScore * 0.24);
+  entry.hintsUsed += safeHintLevel > 0 ? 1 : 0;
+  entry.lastAt = new Date().toISOString();
+  entry.lastSource = source;
+  recordSkillEvidence(state, skill, weightedScore, { correct, hintLevel: safeHintLevel, source });
+  return entry;
+};
+
 export const ensureItemProgress = (state, itemId) => {
   const defaults = {
     reps: 0,
@@ -696,6 +1093,7 @@ export const ensureItemProgress = (state, itemId) => {
     independentSuccesses: 0,
     lastScaffoldReason: null,
     lastScaffoldAt: null,
+    skills: Object.fromEntries(ITEM_SKILL_KEYS.map((key) => [key, createItemSkillEntry()])),
   };
   state.progress.items[itemId] = {
     ...defaults,
@@ -704,6 +1102,7 @@ export const ensureItemProgress = (state, itemId) => {
   if (!Array.isArray(state.progress.items[itemId].history)) state.progress.items[itemId].history = [];
   if (!Array.isArray(state.progress.items[itemId].hintHistory)) state.progress.items[itemId].hintHistory = [];
   ensureScaffoldFields(state.progress.items[itemId]);
+  ensureItemSkills(state.progress.items[itemId]);
   return state.progress.items[itemId];
 };
 
@@ -1046,6 +1445,8 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     activeRecallCompleted: Boolean(exercise.activeRecallCompleted),
     adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
     originalExerciseType: exercise.originalExerciseType || null,
+    skillKey: getExerciseSkill(exercise),
+    errorType: exercise.errorType || null,
   });
   progress.history = progress.history.slice(-30);
 
@@ -1077,6 +1478,22 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     topicProgress.confidence = clamp(topicProgress.confidence * 0.8 + target * 0.2 * hintWeight);
     topicProgress.maxHintLevel = Math.max(topicProgress.maxHintLevel || 0, hintLevel);
   }
+
+  const skillKey = getExerciseSkill(exercise);
+  const ratingScore = numericRating === 0 ? 0.08 : numericRating === 1 ? 0.46 : numericRating === 2 ? 0.78 : 0.94;
+  const observedScore = Number.isFinite(Number(exercise.score)) ? clamp(Number(exercise.score)) : ratingScore;
+  const skillScore = exercise.correct === false ? Math.min(0.34, observedScore) : Math.max(ratingScore, observedScore * 0.86);
+  recordItemSkillEvidence(state, itemId, skillKey, skillScore, {
+    correct: exercise.correct !== false,
+    hintLevel,
+    confidenceState,
+    source: exercise.source || 'review',
+  });
+  if (conceptIds.length) recordSkillEvidence(state, 'grammar', skillScore * hintWeight, {
+    correct: exercise.correct !== false,
+    hintLevel,
+    source: 'sentence grammar',
+  });
 
   addActivity(state, {
     reviews: 1,
@@ -1133,35 +1550,85 @@ const itemPriorityScore = (state, item, { topic = null } = {}) => {
   return unseenBonus + weakness + dueBonus + priority * 0.35 + topicBonus + phraseBonus + verbBonus + familyBonus + staleness;
 };
 
-const chooseBaseExerciseType = (item, progress, index, mode) => {
-  if (mode === 'speaking') return index % 2 === 0 ? 'speaking' : 'typing';
-  if (mode === 'listening') return index % 2 === 0 ? 'listening' : 'choice';
-  if (mode === 'review') {
-    if (!progress || progress.confidence < 0.25) return index % 2 ? 'choice' : 'typing';
-    return ['typing','ordering','listening','speaking'][index % 4];
+const exerciseTypeForSkill = (skill, item) => {
+  if (skill === 'listening') return 'listening';
+  if (skill === 'pronunciation') return 'speaking';
+  if (skill === 'freeProduction') return 'typing';
+  if (skill === 'guidedProduction') {
+    const canOrder = item.itemType === 'phrase' && item.pl.replace(/[.!?]/g, '').split(/\s+/).filter(Boolean).length >= 3;
+    return canOrder ? 'ordering' : 'choice';
   }
-  if (!progress || progress.reps === 0) return index % 3 === 0 ? 'listening' : 'choice';
-  if (progress.confidence < 0.35) return index % 2 ? 'choice' : 'typing';
-  if (progress.confidence < 0.7) return ['typing','ordering','listening'][index % 3];
-  return ['typing','speaking','ordering','listening'][index % 4];
+  return 'choice';
+};
+
+const chooseBaseExerciseType = (item, progress, index, mode) => {
+  if (mode === 'speaking') return { type: index % 2 === 0 ? 'speaking' : 'typing', targetSkill: index % 2 === 0 ? 'pronunciation' : 'freeProduction' };
+  if (mode === 'listening') return { type: index % 2 === 0 ? 'listening' : 'choice', targetSkill: index % 2 === 0 ? 'listening' : 'reading' };
+
+  const weakestSkill = getWeakestItemSkill(progress);
+  const shouldTargetGap = Boolean(progress?.reps && weakestSkill && (mode === 'review' || index % 2 === 0));
+  if (shouldTargetGap) return { type: exerciseTypeForSkill(weakestSkill, item), targetSkill: weakestSkill };
+
+  if (mode === 'review') {
+    if (!progress || progress.confidence < 0.25) return { type: index % 2 ? 'choice' : 'typing', targetSkill: index % 2 ? 'reading' : 'freeProduction' };
+    const rotation = [
+      { type: 'typing', targetSkill: 'freeProduction' },
+      { type: 'ordering', targetSkill: 'guidedProduction' },
+      { type: 'listening', targetSkill: 'listening' },
+      { type: 'speaking', targetSkill: 'pronunciation' },
+    ];
+    return rotation[index % rotation.length];
+  }
+  if (!progress || progress.reps === 0) return index % 3 === 0
+    ? { type: 'listening', targetSkill: 'listening' }
+    : { type: 'choice', targetSkill: index % 2 === 0 ? 'reading' : 'guidedProduction' };
+  if (progress.confidence < 0.35) return index % 2
+    ? { type: 'choice', targetSkill: 'reading' }
+    : { type: 'typing', targetSkill: 'freeProduction' };
+  if (progress.confidence < 0.7) {
+    const rotation = [
+      { type: 'typing', targetSkill: 'freeProduction' },
+      { type: 'ordering', targetSkill: 'guidedProduction' },
+      { type: 'listening', targetSkill: 'listening' },
+    ];
+    return rotation[index % rotation.length];
+  }
+  const rotation = [
+    { type: 'typing', targetSkill: 'freeProduction' },
+    { type: 'speaking', targetSkill: 'pronunciation' },
+    { type: 'ordering', targetSkill: 'guidedProduction' },
+    { type: 'listening', targetSkill: 'listening' },
+    { type: 'choice', targetSkill: 'reading' },
+  ];
+  return rotation[index % rotation.length];
 };
 
 const chooseExerciseType = (item, progress, index, mode) => {
-  const originalType = chooseBaseExerciseType(item, progress, index, mode);
+  const basePlan = chooseBaseExerciseType(item, progress, index, mode);
+  const originalType = basePlan.type;
+  const targetSkill = basePlan.targetSkill || getExerciseSkill({ type: originalType });
   const adaptiveSupportLevel = getAdaptiveSupportLevel(progress);
   const canOrder = item.itemType === 'phrase' && item.pl.replace(/[.!?]/g, '').split(/\s+/).filter(Boolean).length >= 3;
   let type = originalType;
+  let effectiveSkill = targetSkill;
 
-  // Listening and speaking stay modality-specific. Productive written tasks are
-  // the ones stepped down after repeated hint use.
+  // Listening and pronunciation stay modality-specific. Productive written
+  // tasks step down after repeated hint use, while the skill gap remains known.
   if (!['listening', 'speaking'].includes(originalType)) {
-    if (adaptiveSupportLevel >= 2 && ['typing', 'ordering'].includes(originalType)) type = 'choice';
-    else if (adaptiveSupportLevel >= 1 && originalType === 'typing') type = canOrder ? 'ordering' : 'choice';
+    if (adaptiveSupportLevel >= 2 && ['typing', 'ordering'].includes(originalType)) {
+      type = 'choice';
+      effectiveSkill = 'guidedProduction';
+    } else if (adaptiveSupportLevel >= 1 && originalType === 'typing') {
+      type = canOrder ? 'ordering' : 'choice';
+      effectiveSkill = 'guidedProduction';
+    }
   }
 
   return {
     type,
     originalType,
+    targetSkill,
+    effectiveSkill,
     adaptiveSupportLevel,
     adjusted: type !== originalType,
   };
@@ -1194,6 +1661,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     source: item,
     translations: { nl: item.nl || '', en: item.en || '' },
     answer: item.pl,
+    skillKey: exercisePlan.effectiveSkill || exercisePlan.targetSkill,
+    targetSkill: exercisePlan.targetSkill,
     originalExerciseType: exercisePlan.originalType,
     adaptiveSupportLevel: exercisePlan.adaptiveSupportLevel,
     adaptiveSupportAdjusted: exercisePlan.adjusted,
@@ -1207,7 +1676,13 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
   if (preferredType === 'choice') {
     const adaptivePolishRecognition = exercisePlan.adjusted
       && ['typing', 'ordering'].includes(exercisePlan.originalType);
-    const direction = adaptivePolishRecognition ? 'meaning-to-pl' : (index % 2 === 0 ? 'pl-to-meaning' : 'meaning-to-pl');
+    const direction = adaptivePolishRecognition
+      ? 'meaning-to-pl'
+      : exercisePlan.targetSkill === 'reading'
+        ? 'pl-to-meaning'
+        : exercisePlan.targetSkill === 'guidedProduction'
+          ? 'meaning-to-pl'
+          : (index % 2 === 0 ? 'pl-to-meaning' : 'meaning-to-pl');
     if (direction === 'pl-to-meaning') {
       const options = shuffle([translation, ...getDistractors(item, language, 3)], `${item.id}-choice-a`);
       return {
@@ -1215,7 +1690,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
         type: 'choice',
         direction: 'pl-to-meaning',
         answerKind: 'meaning',
-        skill: 'Meaning',
+        skill: 'Reading recognition',
+        skillKey: 'reading',
         instruction: 'Choose the meaning',
         mainText: item.pl,
         safeHint: item.itemType === 'word' ? item.type : 'Translation hidden until you answer.',
@@ -1232,7 +1708,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
       type: 'choice',
       direction: 'meaning-to-pl',
       answerKind: 'polish',
-      skill: 'Recall',
+      skill: 'Guided production',
+      skillKey: 'guidedProduction',
       instruction: 'Choose the natural Polish',
       mainText: translation,
       subText: dualTranslation,
@@ -1249,7 +1726,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
       type: 'ordering',
       direction: 'meaning-to-pl',
       answerKind: 'polish',
-      skill: 'Sentence building',
+      skill: 'Guided production',
+      skillKey: 'guidedProduction',
       instruction: 'Build the sentence',
       mainText: translation,
       subText: dualTranslation,
@@ -1267,6 +1745,7 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
       direction: 'audio-to-meaning',
       answerKind: 'meaning',
       skill: 'Listening',
+      skillKey: 'listening',
       instruction: 'Listen and choose the meaning',
       mainText: 'Tap to listen',
       safeHint: 'You can replay it as often as you need.',
@@ -1283,7 +1762,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
       type: 'speaking',
       direction: 'pl-to-speech',
       answerKind: 'speech',
-      skill: 'Speaking',
+      skill: 'Pronunciation',
+      skillKey: 'pronunciation',
       instruction: 'Say it out loud',
       mainText: item.pl,
       subText: `${translation} · ${dualTranslation}`,
@@ -1297,7 +1777,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     type: 'typing',
     direction: 'meaning-to-pl',
     answerKind: 'polish',
-    skill: 'Active recall',
+    skill: 'Free production',
+    skillKey: 'freeProduction',
     instruction: 'Write it in Polish',
     mainText: translation,
     subText: dualTranslation,
@@ -1405,25 +1886,193 @@ export const getPersonaReadiness = (state, persona) => {
   return clamp(topicScore * 0.5 + practice);
 };
 
+const createGlobalSkillEntry = () => ({
+  attempts: 0,
+  correct: 0,
+  incorrect: 0,
+  score: 0,
+  confidence: 0,
+  hintsUsed: 0,
+  lastAt: null,
+});
+
+const GLOBAL_SKILL_KEYS = [...ITEM_SKILL_KEYS, 'grammar', 'conversation'];
+
 const getSkillEvidence = (state) => {
-  if (!state.stats.skillEvidence) {
-    state.stats.skillEvidence = {
-      speaking: { attempts: 0, score: 0 },
-      listening: { attempts: 0, score: 0 },
-      reading: { attempts: 0, score: 0 },
-      grammar: { attempts: 0, score: 0 },
+  if (!state.stats.skillEvidence) state.stats.skillEvidence = {};
+  const legacySpeaking = state.stats.skillEvidence.speaking || null;
+  GLOBAL_SKILL_KEYS.forEach((key) => {
+    const saved = state.stats.skillEvidence[key]
+      || (key === 'pronunciation' ? legacySpeaking : null)
+      || (key === 'freeProduction' ? state.stats.skillEvidence.grammar : null)
+      || {};
+    state.stats.skillEvidence[key] = {
+      ...createGlobalSkillEntry(),
+      ...saved,
+      attempts: Number(saved.attempts || 0),
+      correct: Number(saved.correct || 0),
+      incorrect: Number(saved.incorrect || 0),
+      score: clamp(Number(saved.score ?? saved.confidence ?? 0)),
+      confidence: clamp(Number(saved.confidence ?? saved.score ?? 0)),
+      hintsUsed: Number(saved.hintsUsed || 0),
     };
-  }
+  });
   return state.stats.skillEvidence;
 };
 
-export const recordSkillEvidence = (state, skill, score) => {
+const normalizeSkillKey = (skill = '') => {
+  const key = String(skill).trim();
+  if (key === 'speaking') return 'pronunciation';
+  if (key === 'producing' || key === 'production') return 'freeProduction';
+  return key;
+};
+
+export const recordSkillEvidence = (state, skill, score, {
+  correct = null,
+  hintLevel = 0,
+  source = 'practice',
+} = {}) => {
   const evidence = getSkillEvidence(state);
-  const key = skill.toLowerCase();
-  if (!evidence[key]) evidence[key] = { attempts: 0, score: 0 };
+  const key = normalizeSkillKey(skill);
+  if (!evidence[key]) evidence[key] = createGlobalSkillEntry();
   const entry = evidence[key];
+  const safeScore = clamp(Number(score) || 0);
+  const blend = entry.attempts < 4 ? 0.3 : 0.16;
   entry.attempts += 1;
-  entry.score = clamp(entry.score * 0.82 + clamp(score) * 0.18);
+  if (correct === true) entry.correct += 1;
+  if (correct === false) entry.incorrect += 1;
+  entry.score = clamp(entry.score * (1 - blend) + safeScore * blend);
+  entry.confidence = clamp(entry.confidence * 0.78 + safeScore * 0.22);
+  entry.hintsUsed += Number(hintLevel || 0) > 0 ? 1 : 0;
+  entry.lastAt = new Date().toISOString();
+  entry.lastSource = source;
+  return entry;
+};
+
+const aggregateItemSkill = (state, skill) => {
+  const entries = Object.values(state.progress.items || {})
+    .map((progress) => progress?.skills?.[skill])
+    .filter((entry) => entry && Number(entry.attempts || 0) > 0);
+  if (!entries.length) return { score: 0, attempts: 0, items: 0 };
+  const totalWeight = entries.reduce((sum, entry) => sum + Math.max(1, Math.sqrt(entry.attempts)), 0);
+  const score = entries.reduce((sum, entry) => sum + clamp(entry.confidence ?? entry.score) * Math.max(1, Math.sqrt(entry.attempts)), 0) / totalWeight;
+  return {
+    score: clamp(score),
+    attempts: entries.reduce((sum, entry) => sum + Number(entry.attempts || 0), 0),
+    items: entries.length,
+  };
+};
+
+const getPlacementFreshness = (placement) => {
+  if (!placement?.completedAt) return 0;
+  const ageDays = Math.max(0, (Date.now() - new Date(placement.completedAt).getTime()) / DAY_MS);
+  return clamp(1 - ageDays / 180);
+};
+
+const blendSkillWithPlacement = (practiceScore, attempts, placementScore, freshness) => {
+  if (!Number.isFinite(Number(placementScore))) return practiceScore;
+  const evidenceSaturation = clamp(attempts / 16);
+  const placementWeight = 0.42 * freshness * (1 - evidenceSaturation * 0.82);
+  return clamp(practiceScore * (1 - placementWeight) + clamp(Number(placementScore)) * placementWeight);
+};
+
+const levelAnchor = (level) => ({
+  'Pre-A1': 0.1,
+  A0: 0.1,
+  A1: 0.34,
+  A2: 0.58,
+  B1: 0.74,
+  B2: 0.88,
+}[level] ?? 0);
+
+export const scorePlacementAnswers = (results = []) => {
+  const valid = results.filter((entry) => entry && entry.skill && Number.isFinite(Number(entry.score)));
+  const totalWeight = valid.reduce((sum, entry) => sum + Math.max(0.1, Number(entry.weight || 1)), 0) || 1;
+  const score = clamp(valid.reduce((sum, entry) => sum + clamp(Number(entry.score)) * Math.max(0.1, Number(entry.weight || 1)), 0) / totalWeight);
+  const skillScores = {};
+  const skillEvidence = {};
+  [...ITEM_SKILL_KEYS, 'grammar'].forEach((skill) => {
+    const entries = valid.filter((entry) => entry.skill === skill);
+    if (!entries.length) return;
+    const weight = entries.reduce((sum, entry) => sum + Math.max(0.1, Number(entry.weight || 1)), 0);
+    skillScores[skill] = clamp(entries.reduce((sum, entry) => sum + clamp(Number(entry.score)) * Math.max(0.1, Number(entry.weight || 1)), 0) / weight);
+    skillEvidence[skill] = entries.length;
+  });
+  const levelScores = {};
+  ['A0', 'A1', 'A2'].forEach((level) => {
+    const entries = valid.filter((entry) => entry.level === level);
+    if (!entries.length) return;
+    const weight = entries.reduce((sum, entry) => sum + Math.max(0.1, Number(entry.weight || 1)), 0);
+    levelScores[level] = clamp(entries.reduce((sum, entry) => sum + clamp(Number(entry.score)) * Math.max(0.1, Number(entry.weight || 1)), 0) / weight);
+  });
+  const coverage = Object.keys(skillScores).length / 6;
+  const evidenceConfidence = clamp(valid.length / 11 * 0.72 + coverage * 0.28);
+  const a0 = levelScores.A0 ?? 0;
+  const a1 = levelScores.A1 ?? 0;
+  const a2 = levelScores.A2 ?? 0;
+  let estimatedLevel = 'Pre-A1';
+  // This short diagnostic only contains evidence through A2, so it never
+  // claims B1. Later real practice can move the ongoing estimate higher.
+  if (a0 >= 0.72 && a1 >= 0.58 && a2 >= 0.48) estimatedLevel = 'A2';
+  else if (a0 >= 0.55 && a1 >= 0.34) estimatedLevel = 'A1';
+  return {
+    score,
+    skillScores,
+    skillEvidence,
+    levelScores,
+    evidenceConfidence,
+    estimatedLevel,
+    answered: valid.length,
+  };
+};
+
+export const applyPlacementResult = (state, results = [], { mode = 'placement' } = {}) => {
+  const summary = scorePlacementAnswers(results);
+  const completedAt = new Date().toISOString();
+  state.onboarding = state.onboarding || {};
+  state.onboarding.placement = state.onboarding.placement || { history: [] };
+  const record = {
+    completedAt,
+    mode,
+    estimatedLevel: summary.estimatedLevel,
+    score: summary.score,
+    evidenceConfidence: summary.evidenceConfidence,
+    skillScores: summary.skillScores,
+    levelScores: summary.levelScores,
+    answered: summary.answered,
+  };
+  state.onboarding.placement.completedAt = completedAt;
+  state.onboarding.placement.estimatedLevel = summary.estimatedLevel;
+  state.onboarding.placement.score = summary.score;
+  state.onboarding.placement.evidenceConfidence = summary.evidenceConfidence;
+  state.onboarding.placement.skillScores = summary.skillScores;
+  state.onboarding.placement.levelScores = summary.levelScores;
+  state.onboarding.placement.lastMode = mode;
+  state.onboarding.placement.history = [
+    record,
+    ...(Array.isArray(state.onboarding.placement.history) ? state.onboarding.placement.history : []),
+  ].slice(0, 6);
+  state.onboarding.diagnosticLevel = summary.estimatedLevel;
+
+  results.forEach((entry) => {
+    if (!entry?.skill || !Number.isFinite(Number(entry.score))) return;
+    if (entry.itemId && ITEM_MAP.has(entry.itemId) && ITEM_SKILL_KEYS.includes(entry.skill)) {
+      // Item evidence also updates the matching global skill once.
+      recordItemSkillEvidence(state, entry.itemId, entry.skill, entry.score, {
+        correct: entry.correct !== false,
+        hintLevel: 0,
+        source: 'level check',
+      });
+    } else {
+      recordSkillEvidence(state, entry.skill, entry.score, {
+        correct: entry.correct,
+        hintLevel: 0,
+        source: 'level check',
+      });
+    }
+  });
+  addActivity(state, { minutes: Math.max(3, Math.round(results.length * 0.35)) });
+  return summary;
 };
 
 export const getMetrics = (state) => {
@@ -1441,25 +2090,65 @@ export const getMetrics = (state) => {
   const unlockedConversations = scenarioScores.filter((score) => score >= 0.56).length;
   const conversationReadiness = average(scenarioScores.slice(0, 8));
   const evidence = getSkillEvidence(state);
+  const placement = state.onboarding?.placement || {};
+  const placementFreshness = getPlacementFreshness(placement);
   const reviewedAccuracy = state.stats.correct + state.stats.incorrect > 0
     ? state.stats.correct / (state.stats.correct + state.stats.incorrect)
     : 0;
 
-  const reading = clamp(
+  const skillProfiles = {};
+  ITEM_SKILL_KEYS.forEach((skill) => {
+    const itemEvidence = aggregateItemSkill(state, skill);
+    const global = evidence[skill] || createGlobalSkillEntry();
+    const attempts = Math.max(itemEvidence.attempts, Number(global.attempts || 0));
+    const practiceScore = itemEvidence.attempts
+      ? clamp(itemEvidence.score * 0.76 + global.score * 0.24)
+      : clamp(global.score);
+    const finalScore = blendSkillWithPlacement(
+      practiceScore,
+      attempts,
+      placement.skillScores?.[skill],
+      placementFreshness,
+    );
+    skillProfiles[skill] = {
+      score: finalScore,
+      practiceScore,
+      attempts,
+      items: itemEvidence.items,
+      evidenceConfidence: clamp(attempts / 18 * 0.8 + (placement.skillScores?.[skill] !== undefined ? placementFreshness * 0.2 : 0)),
+    };
+  });
+
+  const reading = clamp(skillProfiles.reading.score || (
     average([...ITEM_MAP.values()].map((item) => state.progress.items[item.id]?.confidence || 0)) * 0.75
-      + reviewedAccuracy * 0.25,
+      + reviewedAccuracy * 0.25
+  ));
+  const listening = clamp(skillProfiles.listening.score);
+  const guidedProduction = clamp(skillProfiles.guidedProduction.score);
+  const freeProduction = clamp(skillProfiles.freeProduction.score);
+  const pronunciation = clamp(skillProfiles.pronunciation.score);
+  const speaking = clamp(freeProduction * 0.56 + pronunciation * 0.44);
+  const grammarEvidence = evidence.grammar || createGlobalSkillEntry();
+  const grammar = clamp(grammarMastery * 0.72 + grammarEvidence.score * 0.28);
+  const conversation = clamp(conversationReadiness * 0.72 + (evidence.conversation?.score || 0) * 0.28);
+  const production = clamp(guidedProduction * 0.28 + freeProduction * 0.48 + pronunciation * 0.24);
+
+  let overall = clamp(
+    Math.min(1, masteredWords / 100) * 0.17
+      + Math.min(1, knownPhrases / 48) * 0.19
+      + reading * 0.1
+      + listening * 0.13
+      + guidedProduction * 0.1
+      + freeProduction * 0.13
+      + pronunciation * 0.07
+      + grammar * 0.06
+      + conversation * 0.05,
   );
-  const listening = clamp((evidence.listening?.score || 0) * 0.75 + Math.min(1, state.stats.reviews / 80) * 0.25);
-  const speaking = clamp((evidence.speaking?.score || 0) * 0.7 + Math.min(1, state.stats.speakingAttempts / 40) * 0.3);
-  const grammar = clamp(grammarMastery);
-  const overall = clamp(
-    Math.min(1, masteredWords / 100) * 0.23
-      + Math.min(1, knownPhrases / 48) * 0.25
-      + grammar * 0.18
-      + listening * 0.1
-      + speaking * 0.12
-      + conversationReadiness * 0.12,
-  );
+  if (placement.estimatedLevel && placementFreshness > 0) {
+    const totalAttempts = ITEM_SKILL_KEYS.reduce((sum, skill) => sum + skillProfiles[skill].attempts, 0);
+    const placementWeight = 0.28 * placementFreshness * (1 - clamp(totalAttempts / 70) * 0.8);
+    overall = clamp(overall * (1 - placementWeight) + levelAnchor(placement.estimatedLevel) * placementWeight);
+  }
 
   let cefr = 'Pre-A1';
   let nextCefr = 'A1';
@@ -1482,9 +2171,29 @@ export const getMetrics = (state) => {
     cefrProgress = clamp((overall - 0.84) / 0.12);
   }
 
+  const totalSkillAttempts = ITEM_SKILL_KEYS.reduce((sum, skill) => sum + skillProfiles[skill].attempts, 0);
+  const skillCoverage = ITEM_SKILL_KEYS.filter((skill) => skillProfiles[skill].attempts > 0 || placement.skillScores?.[skill] !== undefined).length / ITEM_SKILL_KEYS.length;
+  const evidenceConfidence = clamp(
+    Math.min(1, totalSkillAttempts / 70) * 0.56
+      + skillCoverage * 0.24
+      + Math.min(1, state.stats.conversationTurns / 20) * 0.1
+      + (placement.evidenceConfidence || 0) * placementFreshness * 0.1,
+  );
+
   const dailyGoal = Math.max(5, state.profile.dailyGoal || 15);
   const comfortGap = clamp(0.76 - conversationReadiness, 0, 0.76);
   const estimatedWeeks = comfortGap === 0 ? 0 : Math.max(2, Math.ceil((comfortGap * 2800) / (dailyGoal * 7)));
+  const placementAgeDays = placement.completedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(placement.completedAt).getTime()) / DAY_MS))
+    : null;
+
+  const canDo = [
+    { id: 'greet', label: 'Greet family and exchange basic courtesies', ready: Math.max(reading, guidedProduction) >= 0.22 },
+    { id: 'repair', label: 'Ask someone to repeat or speak more slowly', ready: freeProduction >= 0.28 || knownPhrases >= 5 },
+    { id: 'table', label: 'Handle a short exchange at the family table', ready: getTopicReadiness(state, 'food') >= 0.42 },
+    { id: 'work', label: 'Answer a simple question about work or hobbies', ready: Math.max(getTopicReadiness(state, 'work'), getTopicReadiness(state, 'hobbies')) >= 0.45 },
+    { id: 'followup', label: 'Understand and answer one natural follow-up question', ready: listening >= 0.5 && freeProduction >= 0.42 },
+  ];
 
   return {
     masteredWords,
@@ -1494,14 +2203,25 @@ export const getMetrics = (state) => {
     conversationReadiness,
     reading,
     listening,
+    guidedProduction,
+    freeProduction,
+    pronunciation,
+    production,
     speaking,
     grammar,
+    conversation,
     overall,
     cefr,
     nextCefr,
     cefrProgress,
     estimatedWeeks,
     accuracy: reviewedAccuracy,
+    skills: skillProfiles,
+    evidenceConfidence,
+    placementLevel: placement.estimatedLevel || null,
+    placementAgeDays,
+    recalibrationDue: placementAgeDays === null || placementAgeDays >= 28,
+    canDo,
   };
 };
 
@@ -1626,18 +2346,25 @@ export const evaluateConversationReply = (text, turn) => {
       score: 0,
       accepted: false,
       feedback: 'Say or type a short Polish answer. One useful chunk is enough.',
+      feedbackNl: 'Zeg of typ een kort Pools antwoord. Eén bruikbaar spreekblok is genoeg.',
       suggestion: turn.suggestions?.[0]?.pl || '',
+      errorType: 'empty',
     };
   }
 
-  let best = { score: 0, suggestion: turn.suggestions?.[0] };
+  let best = { score: 0, suggestion: turn.suggestions?.[0], evaluation: null };
   (turn.suggestions || []).forEach((suggestion) => {
     const intents = suggestion.intent || [];
     const hits = intents.filter((keyword) => normalized.includes(normalizeText(keyword, { loose: true }))).length;
     const keywordScore = intents.length ? hits / Math.min(2, intents.length) : 0;
-    const phraseScore = similarity(text, suggestion.pl);
-    const score = Math.max(keywordScore, phraseScore * 0.88);
-    if (score > best.score) best = { score, suggestion };
+    const evaluation = evaluateAnswer(text, suggestion.pl, {
+      language: 'pl',
+      acceptedAnswers: suggestion.alternatives || [],
+      grammar: turn.grammar || [],
+    });
+    const phraseScore = evaluation.correct ? Math.max(0.9, evaluation.score) : evaluation.close ? Math.max(0.56, evaluation.score) : evaluation.score;
+    const score = Math.max(keywordScore, phraseScore * 0.9);
+    if (score > best.score) best = { score, suggestion, evaluation };
   });
 
   let correction = null;
@@ -1651,7 +2378,9 @@ export const evaluateConversationReply = (text, turn) => {
   }
 
   const polishSignals = /[ąćęłńóśźż]|\b(tak|nie|dziękuję|prosze|proszę|mam|jestem|lubię|poproszę|dobrze|trochę|gdzie|czy|mogę|bardzo)\b/i.test(text);
-  const accepted = best.score >= 0.42 || (polishSignals && normalized.split(' ').length >= 2);
+  const accepted = Boolean(best.evaluation?.correct || best.score >= 0.48 || (polishSignals && normalized.split(' ').length >= 2));
+  const evaluatorFeedback = best.evaluation?.message;
+  const evaluatorFeedbackNl = best.evaluation?.messageNl;
 
   return {
     score: clamp(best.score || (polishSignals ? 0.44 : 0.12)),
@@ -1659,11 +2388,20 @@ export const evaluateConversationReply = (text, turn) => {
     feedback: correction
       ? correction
       : accepted
-        ? 'That would keep the conversation moving naturally.'
-        : 'The intention is not clear yet. Borrow the sentence frame and change one detail.',
+        ? (best.evaluation?.errorType === 'word_order'
+          ? best.evaluation.message
+          : 'That would keep the conversation moving naturally.')
+        : evaluatorFeedback || 'The intention is not clear yet. Borrow the sentence frame and change one detail.',
+    feedbackNl: correction
+      ? 'De zin heeft de juiste bedoeling, maar één Poolse vorm moet veranderen.'
+      : accepted
+        ? (best.evaluation?.messageNl || 'Dit houdt het gesprek op een natuurlijke manier gaande.')
+        : evaluatorFeedbackNl || 'De bedoeling is nog niet duidelijk. Gebruik het zinspatroon en verander één detail.',
     correction,
     correctedText,
     suggestion: best.suggestion?.pl || turn.suggestions?.[0]?.pl || '',
+    errorType: correction ? 'grammar_correction' : best.evaluation?.errorType || (accepted ? 'intent_match' : 'different_answer'),
+    evaluation: best.evaluation,
   };
 };
 
@@ -1691,7 +2429,8 @@ export const recordConversationTurn = (state, personaId, score, {
     if (clamp(score) >= 0.42) stats.hintRecoveries += 1;
   }
   addActivity(state, { conversations: 1 });
-  recordSkillEvidence(state, 'speaking', weightedScore);
+  recordSkillEvidence(state, 'freeProduction', weightedScore, { correct: score >= 0.42, hintLevel: safeHintLevel, source: 'conversation' });
+  recordSkillEvidence(state, 'conversation', weightedScore, { correct: score >= 0.42, hintLevel: safeHintLevel, source: 'conversation' });
 };
 
 export const getPatternSentence = (pattern, selections = {}) => {

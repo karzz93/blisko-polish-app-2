@@ -1,18 +1,20 @@
-BLISKO v1.2.2 - ADAPTIVE SUPPORT UPDATE
+BLISKO v1.3.0 - TRUST AND MEASUREMENT UPDATE
 
-This is a complete cumulative GitHub Pages package. It includes the earlier
-progress dashboard, answer-visibility safeguards, tutor fixes, progressive
-hints, the black-screen repair, and this update.
+This is a complete cumulative GitHub Pages package. It includes every earlier
+progress, tutor, hint, adaptive-support, and cache-repair update.
 
 WHAT CHANGED
-- Repeated hint use is remembered per word, phrase, and sentence pattern.
-- A difficult typed sentence returns as word ordering; repeated heavy support
-  can make it a Polish multiple-choice task.
-- Independent successful answers gradually remove the scaffolding again.
-- The hint button is kept inside Android's visible viewport when the keyboard
-  opens, and asking for a hint no longer forces the keyboard to reopen.
-- The completed-session screen now has one clear, full-width Return to Today
-  action instead of duplicate small buttons.
+- Polish-aware answer evaluation accepts valid alternatives, flexible word
+  order, gender variants, and missing diacritics while explaining real errors.
+- Reading, listening, guided production, free production, and pronunciation
+  now have separate evidence and confidence histories.
+- A short placement and recalibration test creates a conservative CEFR baseline.
+- Progress now shows evidence confidence and practical can-do abilities.
+- Automatic rotating safety copies are created before migrations and daily.
+- App Health can inspect storage, make or restore a safety copy, and safely
+  repair downloaded app files without deleting learning data.
+- The service worker installs app files as one verified build to avoid mixed
+  versions and black screens after updates.
 
 UPDATE WITHOUT LOSING PROGRESS
 1. Keep the same GitHub repository and GitHub Pages address.
@@ -21,9 +23,9 @@ UPDATE WITHOUT LOSING PROGRESS
 4. Wait for Pages to deploy, then open the normal Pages URL in Chrome while
    online and refresh once.
 5. Fully close and reopen the installed app. A second reopen can be needed for
-   the new service worker cache.
+   the verified service worker build to activate.
 
 Do not clear Chrome site data and do not uninstall the PWA. The IndexedDB name,
 storage key, manifest id, scope, and Pages path are unchanged, so existing
-progress remains available. Export a backup from Settings before updating as
-an extra precaution.
+progress remains available. Blisko also creates a local safety copy before
+schema or version migrations.

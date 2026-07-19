@@ -1,7 +1,7 @@
 {
   "name": "Blisko — Polish for family",
   "short_name": "Blisko",
-  "description": "An adaptive, offline-first Polish coach with Polish-aware feedback, skill-specific memory, level calibration, and progressive hints for real family conversations.",
+  "description": "An adaptive, offline-first Polish coach with a Listening Lab, Polish Sound Lab, tap-to-explain morphology, skill-specific memory, and real family conversations.",
   "id": "./index.html",
   "start_url": "./index.html#dashboard",
   "scope": "./",
@@ -35,6 +35,17 @@
     }
   ],
   "shortcuts": [
+    {
+      "name": "Listening and sound practice",
+      "short_name": "Listen",
+      "url": "./index.html#learn",
+      "icons": [
+        {
+          "src": "./icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
     {
       "name": "Talk to family",
       "short_name": "Talk",

@@ -1,31 +1,42 @@
-BLISKO v1.3.0 - TRUST AND MEASUREMENT UPDATE
+BLISKO v1.4.0 - LISTENING AND POLISH INTELLIGENCE
 
 This is a complete cumulative GitHub Pages package. It includes every earlier
-progress, tutor, hint, adaptive-support, and cache-repair update.
+progress, tutor, hint, adaptive-support, trust, measurement, and cache-repair
+update.
 
 WHAT CHANGED
-- Polish-aware answer evaluation accepts valid alternatives, flexible word
-  order, gender variants, and missing diacritics while explaining real errors.
-- Reading, listening, guided production, free production, and pronunciation
-  now have separate evidence and confidence histories.
-- A short placement and recalibration test creates a conservative CEFR baseline.
-- Progress now shows evidence confidence and practical can-do abilities.
-- Automatic rotating safety copies are created before migrations and daily.
-- App Health can inspect storage, make or restore a safety copy, and safely
-  repair downloaded app files without deleting learning data.
-- The service worker installs app files as one verified build to avoid mixed
-  versions and black screens after updates.
+- A new Listening Lab trains meaning at natural pace, Polish dictation, and
+  shadowing. Slow, natural, and stretch playback are measured separately.
+- The review engine prioritizes phrases with weak listening evidence and records
+  replays, transcript support, dictation accuracy, and shadowing confidence.
+- A Polish Sound Lab teaches eight high-value sound families for Dutch speakers:
+  ł/l, sz/ś, cz/ć, ż-rz/ź, c/dz, ą/ę, y/i, and consonant clusters.
+- Polish words throughout lessons, feedback, conversations, Tutor examples, the
+  pattern lab, and the library can be tapped to open a Form Lens.
+- The Form Lens explains lemma, part of speech, case or verb form, why the form
+  works, pronunciation cues, related forms, and Dutch/English comparisons.
+- Polish-aware error feedback can link directly to the ending or form that needs
+  repair.
+- Settings can select an installed Polish voice and a default listening speed.
+- Progress now separates natural-speed listening, stretch listening, dictation,
+  sound-family coverage, and replay evidence.
+
+AUDIO NOTE
+Playback uses the best Polish speech voice installed in the browser or Android
+system. This package does not bundle copyrighted or cloud-hosted human audio, so
+it remains small and fully offline after installation.
 
 UPDATE WITHOUT LOSING PROGRESS
 1. Keep the same GitHub repository and GitHub Pages address.
-2. Upload every file from this folder directly to the repository root.
-3. Allow GitHub to replace matching files and commit to main.
-4. Wait for Pages to deploy, then open the normal Pages URL in Chrome while
+2. In Blisko, export a portable backup before updating as an extra precaution.
+3. Upload every extracted file directly to the repository root.
+4. Allow GitHub to replace matching files and commit to main.
+5. Wait for Pages to deploy, then open the normal Pages URL in Chrome while
    online and refresh once.
-5. Fully close and reopen the installed app. A second reopen can be needed for
-   the verified service worker build to activate.
+6. Fully close and reopen the installed app. A second reopen can be needed for
+   the verified service-worker build to activate.
 
 Do not clear Chrome site data and do not uninstall the PWA. The IndexedDB name,
 storage key, manifest id, scope, and Pages path are unchanged, so existing
-progress remains available. Blisko also creates a local safety copy before
-schema or version migrations.
+progress remains available. Blisko creates a local safety copy before schema or
+version migrations.

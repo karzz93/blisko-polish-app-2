@@ -5,8 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.3.0';
-import { getTodayKey } from './storage.js?v=1.3.0';
+} from './data.js?v=1.4.0';
+import { getTodayKey } from './storage.js?v=1.4.0';
+import { explainPolishDifference } from './polish.js?v=1.4.0';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -392,6 +393,7 @@ export const evaluateAnswer = (input, expected, context = {}) => {
       messageNl: 'De zin is correct. Voeg waar mogelijk de Poolse letters toe; ze geven belangrijke klank- en spellinginformatie.',
       expected: rawExpected,
       acceptedAnswer: best.variant,
+      morphology: language === 'pl' ? explainPolishDifference(rawInput, best.variant) : [],
       concept,
     };
   }
@@ -456,6 +458,7 @@ export const evaluateAnswer = (input, expected, context = {}) => {
       messageNl: `Je antwoord haalde de zin duidelijk terug. Vergelijk de spelling met “${best.variant}”.`,
       expected: rawExpected,
       acceptedAnswer: best.variant,
+      morphology: language === 'pl' ? explainPolishDifference(rawInput, best.variant) : [],
       concept,
     };
   }
@@ -475,6 +478,7 @@ export const evaluateAnswer = (input, expected, context = {}) => {
       expected: rawExpected,
       acceptedAnswer: best.variant,
       differences: endingPairs,
+      morphology: explainPolishDifference(rawInput, best.variant),
       concept,
     };
   }
@@ -492,6 +496,7 @@ export const evaluateAnswer = (input, expected, context = {}) => {
       messageNl: `De bedoeling is duidelijk, maar ${missing.length === 1 ? 'één woord ontbreekt' : 'twee woorden ontbreken'}: ${missing.join(', ')}.`,
       expected: rawExpected,
       missing,
+      morphology: language === 'pl' ? explainPolishDifference(rawInput, best.variant) : [],
       concept,
     };
   }
@@ -509,6 +514,7 @@ export const evaluateAnswer = (input, expected, context = {}) => {
       messageNl: `De kernzin staat er, maar ${extra.length === 1 ? 'dit extra woord verandert de vorm' : 'deze extra woorden veranderen de vorm'}: ${extra.join(', ')}.`,
       expected: rawExpected,
       extra,
+      morphology: language === 'pl' ? explainPolishDifference(rawInput, best.variant) : [],
       concept,
     };
   }
@@ -530,6 +536,7 @@ export const evaluateAnswer = (input, expected, context = {}) => {
       : 'De bedoelde betekenis is nog niet duidelijk genoeg. Leer de hele zin als één bruikbaar spreekblok.',
     expected: rawExpected,
     acceptedAnswer: best.variant,
+    morphology: language === 'pl' ? explainPolishDifference(rawInput, best.variant) : [],
     concept,
   };
 };

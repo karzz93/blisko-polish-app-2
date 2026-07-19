@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.3.0';
+} from './data.js?v=1.4.0';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.3.0';
+} from './storage.js?v=1.4.0';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -65,8 +65,17 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.3.0';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.3.0';
+} from './engine.js?v=1.4.0';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.4.0';
+import {
+  SOUND_LESSONS,
+  analyzePolishWord,
+  analyzePolishSentence,
+  getSoundLesson,
+  getSoundLessonForWord,
+  splitPolishTokens,
+  isPolishWordToken,
+} from './polish.js?v=1.4.0';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -120,6 +129,25 @@ const escapeHtml = (value = '') => String(value)
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#039;');
 
+const polishInteractive = (text = '', { className = '' } = {}) => {
+  const source = String(text || '');
+  if (!source) return '';
+  const wordPattern = /[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]+(?:-[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]+)?/g;
+  let output = '';
+  let lastIndex = 0;
+  let match;
+  while ((match = wordPattern.exec(source))) {
+    output += escapeHtml(source.slice(lastIndex, match.index));
+    const token = match[0];
+    output += `<button class="morph-token ${className}" type="button" data-action="open-morphology" data-word="${escapeHtml(token)}" data-sentence="${escapeHtml(source)}" aria-label="Explain Polish form ${escapeHtml(token)}">${escapeHtml(token)}</button>`;
+    lastIndex = match.index + token.length;
+  }
+  output += escapeHtml(source.slice(lastIndex));
+  return output;
+};
+
+const ratio = (value, total) => total ? Math.round((Number(value || 0) / Number(total)) * 100) : 0;
+
 const percent = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const formatNumber = (value) => new Intl.NumberFormat('en-NL').format(value || 0);
@@ -150,10 +178,17 @@ let tutorAbortController = null;
 let largestVisualViewportHeight = 0;
 let placementSession = null;
 let appHealthSnapshot = null;
+let activeListeningLab = null;
+let activeSoundLab = null;
+let morphologyContext = null;
+let availablePolishVoices = [];
 
 const mainContent = document.getElementById('main-content');
 const modalRoot = document.getElementById('modal-root');
 const toastRoot = document.getElementById('toast-root');
+const morphologyRoot = document.createElement('div');
+morphologyRoot.id = 'morphology-root';
+document.body.appendChild(morphologyRoot);
 
 const PAGE_META = {
   dashboard: ['YOUR COACH', 'Today'],
@@ -269,20 +304,49 @@ const setupVisualViewport = () => {
   document.addEventListener('focusout', () => setTimeout(() => syncVisualViewport(), 120));
 };
 
-const speak = (text, { rate = state.settings.speechRate, onEnd = null } = {}) => {
+const refreshPolishVoices = () => {
+  if (!('speechSynthesis' in window)) {
+    availablePolishVoices = [];
+    return availablePolishVoices;
+  }
+  availablePolishVoices = window.speechSynthesis.getVoices()
+    .filter((voice) => voice.lang?.toLowerCase().startsWith('pl'))
+    .sort((left, right) => Number(right.localService) - Number(left.localService) || left.name.localeCompare(right.name));
+  return availablePolishVoices;
+};
+
+const speechRateFor = (speed = 'natural') => {
+  const base = Number(state?.settings?.speechRate || 0.86);
+  if (speed === 'slow') return Math.max(0.48, base * 0.74);
+  if (speed === 'fast') return Math.min(1.2, Math.max(0.96, base * 1.2));
+  return Math.min(1.05, Math.max(0.72, base));
+};
+
+const speak = (text, {
+  rate = state?.settings?.speechRate || 0.86,
+  speed = null,
+  voiceURI = state?.settings?.speechVoiceURI || '',
+  onStart = null,
+  onEnd = null,
+  cancel = true,
+} = {}) => {
   if (!('speechSynthesis' in window)) {
     showToast('Speech is unavailable', 'This browser does not expose text-to-speech.', 'alert');
-    return;
+    return null;
   }
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
+  if (cancel) window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(String(text || ''));
   utterance.lang = 'pl-PL';
-  utterance.rate = Number(rate) || 0.86;
-  const voices = window.speechSynthesis.getVoices();
-  const polish = voices.find((voice) => voice.lang?.toLowerCase().startsWith('pl'));
-  if (polish) utterance.voice = polish;
+  utterance.rate = Number(speed ? speechRateFor(speed) : rate) || 0.86;
+  const voices = refreshPolishVoices();
+  const selected = voices.find((voice) => voice.voiceURI === voiceURI)
+    || voices.find((voice) => voice.localService)
+    || voices[0];
+  if (selected) utterance.voice = selected;
+  if (onStart) utterance.onstart = onStart;
   if (onEnd) utterance.onend = onEnd;
   window.speechSynthesis.speak(utterance);
+  return utterance;
 };
 
 const setTheme = (theme) => {
@@ -392,6 +456,581 @@ const closeModal = () => {
   document.body.style.overflow = '';
   activeGame = null;
   placementSession = null;
+  activeListeningLab = null;
+  activeSoundLab = null;
+};
+
+const closeMorphologyLens = () => {
+  morphologyRoot.innerHTML = '';
+  morphologyContext = null;
+  document.body.classList.remove('morphology-open');
+  if (!modalRoot.innerHTML) document.body.style.overflow = '';
+};
+
+const renderMorphologyOverlay = () => {
+  if (!morphologyContext) return;
+  const { sentence } = morphologyContext;
+  const analyses = analyzePolishSentence(sentence);
+  if (!analyses.length) {
+    closeMorphologyLens();
+    return;
+  }
+  const selectedIndex = Math.max(0, Math.min(analyses.length - 1, Number(morphologyContext.selectedIndex || 0)));
+  morphologyContext.selectedIndex = selectedIndex;
+  const selected = analyses[selectedIndex];
+  const soundLesson = getSoundLessonForWord(selected.token);
+  const pronunciationNotes = selected.pronunciation?.notes || [];
+  morphologyRoot.innerHTML = `
+    <div class="modal-backdrop morphology-backdrop" role="presentation">
+      <section class="modal morphology-modal" role="dialog" aria-modal="true" aria-label="Polish form lens">
+        <header class="modal-header morphology-header">
+          <div><p class="eyebrow">POLISH FORM LENS</p><h2>${escapeHtml(selected.token)}</h2><p>Tap another word to see what its ending is doing in this sentence.</p></div>
+          <button class="modal-close" type="button" data-action="close-morphology" aria-label="Close form lens">${icon('close')}</button>
+        </header>
+        <div class="modal-body morphology-body">
+          <div class="morph-sentence" lang="pl">
+            ${analyses.map((analysis, index) => `<button class="morph-sentence-token ${index === selectedIndex ? 'active' : ''}" type="button" data-action="select-morphology-token" data-index="${index}">${escapeHtml(analysis.token)}</button>`).join(' ')}
+          </div>
+
+          <section class="morph-identity-card">
+            <div class="morph-word-stack"><strong>${escapeHtml(selected.token)}</strong><span>lemma: ${escapeHtml(selected.lemma || selected.token)}</span></div>
+            <div class="morph-tags">
+              <span>${escapeHtml(selected.pos || 'word form')}</span>
+              <span>${escapeHtml(selected.form || 'context form')}</span>
+              <span class="confidence-${escapeHtml(selected.confidence || 'limited')}">${selected.source === 'curated' ? 'verified in Blisko' : 'context estimate'}</span>
+            </div>
+          </section>
+
+          <section class="morph-grid">
+            <article class="morph-card primary">
+              <span class="morph-card-label">WHAT IT MEANS HERE</span>
+              <h3>${escapeHtml(selected.meaningEn || 'Meaning depends on context')}</h3>
+              ${state.settings.showDutch ? `<p lang="nl"><strong>NL</strong> ${escapeHtml(selected.meaningNl || '')}</p>` : ''}
+            </article>
+            <article class="morph-card">
+              <span class="morph-card-label">WHY THIS FORM WORKS</span>
+              <p>${escapeHtml(selected.whyEn || '')}</p>
+              ${state.settings.showDutch ? `<p class="morph-secondary" lang="nl">${escapeHtml(selected.whyNl || '')}</p>` : ''}
+            </article>
+          </section>
+
+          <section class="morph-pronunciation-card">
+            <div>
+              <span class="morph-card-label">LISTENING ANCHOR</span>
+              <h3>${escapeHtml(selected.pronunciation?.approximate || selected.token)}</h3>
+              <p>${escapeHtml(selected.pronunciation?.cautionEn || '')}</p>
+              ${state.settings.showDutch ? `<small lang="nl">${escapeHtml(selected.pronunciation?.cautionNl || '')}</small>` : ''}
+            </div>
+            <div class="morph-audio-actions">
+              <button class="secondary-button compact" type="button" data-action="morphology-listen-word">${icon('volume')} Word</button>
+              <button class="secondary-button compact" type="button" data-action="morphology-listen-sentence">${icon('headphones')} Sentence</button>
+            </div>
+          </section>
+
+          ${pronunciationNotes.length ? `<div class="morph-note-list">${pronunciationNotes.map((note) => `<div><span>${icon('volume')}</span><p>${escapeHtml(note.en)}${state.settings.showDutch ? `<small lang="nl">${escapeHtml(note.nl)}</small>` : ''}</p></div>`).join('')}</div>` : ''}
+
+          ${selected.related?.length ? `<section class="morph-related"><span class="morph-card-label">RELATED FORMS</span><div>${selected.related.map((form) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(form)}" data-sentence="${escapeHtml(form)}">${escapeHtml(form)}</button>`).join('')}</div></section>` : ''}
+
+          ${soundLesson ? `<section class="morph-sound-link"><span>${icon('headphones')}</span><div><strong>${escapeHtml(soundLesson.symbol)} · ${escapeHtml(soundLesson.title)}</strong><p>This word belongs to a focused Polish sound lesson.</p></div><button class="secondary-button compact" type="button" data-action="open-sound-lesson" data-lesson="${escapeHtml(soundLesson.id)}">Open sound lesson</button></section>` : ''}
+        </div>
+        <footer class="modal-footer morphology-footer">
+          <button class="ghost-button" type="button" data-action="morphology-practice">Practise this form</button>
+          <button class="primary-button" type="button" data-action="close-morphology">Done</button>
+        </footer>
+      </section>
+    </div>
+  `;
+  hydrateStaticIcons(morphologyRoot);
+  document.body.classList.add('morphology-open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => morphologyRoot.querySelector('.modal-close')?.focus(), 20);
+};
+
+const openMorphologyLens = (word = '', sentence = '') => {
+  const safeSentence = String(sentence || word || '').trim();
+  const analyses = analyzePolishSentence(safeSentence);
+  if (!analyses.length) {
+    showToast('No Polish form found', 'Open the lens from a Polish word or sentence.', 'info');
+    return;
+  }
+  const normalizedWord = normalizeText(word, { loose: false });
+  const selectedIndex = Math.max(0, analyses.findIndex((analysis) => normalizeText(analysis.token) === normalizedWord));
+  morphologyContext = { sentence: safeSentence, selectedIndex };
+  renderMorphologyOverlay();
+};
+
+const practiseMorphologyContext = () => {
+  if (!morphologyContext) return;
+  const analysis = analyzePolishSentence(morphologyContext.sentence)[morphologyContext.selectedIndex || 0];
+  if (!analysis) return;
+  const normalizedToken = normalizeText(analysis.token, { loose: true });
+  const normalizedLemma = normalizeText(analysis.lemma, { loose: true });
+  const word = WORDS.find((item) => [item.pl].some((value) => [normalizedToken, normalizedLemma].includes(normalizeText(value, { loose: true }))));
+  const relatedPhrases = PHRASES.filter((phrase) => {
+    const text = normalizeText(phrase.pl, { loose: true });
+    return text.split(' ').includes(normalizedToken) || text.split(' ').includes(normalizedLemma);
+  }).slice(0, 3);
+  const itemIds = [word?.id, ...relatedPhrases.map((phrase) => phrase.id)].filter(Boolean);
+  closeMorphologyLens();
+  if (!itemIds.length) {
+    showToast('Form saved as a listening insight', 'This inferred form is not yet a standalone curriculum item.', 'brain');
+    return;
+  }
+  startSession({ mode: 'smart', itemIds: [...new Set(itemIds)], title: `${analysis.lemma || analysis.token} · form practice` });
+};
+
+const ensureListeningStats = () => {
+  state.stats.listeningLab = {
+    sessions: 0, attempts: 0, correct: 0, dictations: 0, dictationCorrect: 0,
+    naturalSpeedAttempts: 0, naturalSpeedCorrect: 0, fastSpeedAttempts: 0, fastSpeedCorrect: 0,
+    replays: 0, shadowing: 0, lastAt: null,
+    ...(state.stats.listeningLab || {}),
+  };
+  return state.stats.listeningLab;
+};
+
+const ensureSoundProgress = (lessonId) => {
+  state.progress.sounds = state.progress.sounds || {};
+  state.progress.sounds[lessonId] = {
+    attempts: 0,
+    correct: 0,
+    confidence: 0,
+    lastAt: null,
+    ...(state.progress.sounds[lessonId] || {}),
+  };
+  return state.progress.sounds[lessonId];
+};
+
+const ensureSoundStats = () => {
+  state.stats.soundLab = {
+    attempts: 0,
+    correct: 0,
+    completedLessons: [],
+    lastAt: null,
+    ...(state.stats.soundLab || {}),
+  };
+  state.stats.soundLab.completedLessons = Array.isArray(state.stats.soundLab.completedLessons)
+    ? state.stats.soundLab.completedLessons
+    : [];
+  return state.stats.soundLab;
+};
+
+const listeningCandidateScore = (phrase) => {
+  const progress = state.progress.items[phrase.id];
+  const skill = progress?.skills?.listening;
+  const confidence = Number(skill?.confidence || 0);
+  const attempts = Number(skill?.attempts || 0);
+  const dueBoost = progress?.dueAt && new Date(progress.dueAt).getTime() <= Date.now() ? 0.2 : 0;
+  const unseenBoost = attempts === 0 ? 0.22 : 0;
+  return (1 - confidence) * 1.4 + dueBoost + unseenBoost + Number(phrase.priority || 0) / 500;
+};
+
+const buildListeningLabItems = ({ length = 6, mode = 'adaptive' } = {}) => {
+  const pool = PHRASES
+    .filter((phrase) => phrase.pl.split(/\s+/).length >= 2 && phrase.pl.split(/\s+/).length <= 10)
+    .sort((left, right) => listeningCandidateScore(right) - listeningCandidateScore(left));
+  const selected = [];
+  const seenTopics = new Set();
+  for (const phrase of pool) {
+    if (selected.length >= length) break;
+    if (seenTopics.has(phrase.topic) && pool.length - selected.length > length) continue;
+    selected.push(phrase);
+    seenTopics.add(phrase.topic);
+  }
+  for (const phrase of pool) {
+    if (selected.length >= length) break;
+    if (!selected.includes(phrase)) selected.push(phrase);
+  }
+  const patterns = mode === 'dictation'
+    ? ['dictation', 'dictation', 'meaning', 'dictation', 'shadow', 'dictation']
+    : ['meaning', 'dictation', 'meaning', 'shadow', 'dictation', 'meaning'];
+  return selected.map((phrase, index) => {
+    const type = patterns[index % patterns.length];
+    const correctMeaning = primaryTranslation(phrase);
+    const distractors = PHRASES
+      .filter((candidate) => candidate.id !== phrase.id && candidate.topic !== phrase.topic)
+      .map((candidate) => primaryTranslation(candidate))
+      .filter((value, optionIndex, array) => value && value !== correctMeaning && array.indexOf(value) === optionIndex)
+      .slice(index * 2, index * 2 + 4);
+    return {
+      id: `listen-${phrase.id}-${index}`,
+      phrase,
+      type,
+      options: type === 'meaning' ? shuffle([correctMeaning, ...distractors.slice(0, 2)], `${phrase.id}-${index}`) : [],
+      played: 0,
+      speedPlays: { slow: 0, natural: 0, fast: 0 },
+      lastSpeed: state.settings.listeningDefaultSpeed || 'natural',
+      answered: false,
+      result: null,
+      revealed: false,
+      typed: '',
+    };
+  });
+};
+
+const currentListeningItem = () => activeListeningLab?.items?.[activeListeningLab.index] || null;
+
+const openListeningLab = (mode = 'adaptive') => {
+  activeListeningLab = {
+    mode,
+    items: buildListeningLabItems({ mode }),
+    index: 0,
+    correct: 0,
+    close: 0,
+    startedAt: Date.now(),
+    summarySaved: false,
+  };
+  renderListeningLabModal();
+};
+
+const closeListeningLab = () => {
+  window.speechSynthesis?.cancel?.();
+  activeListeningLab = null;
+  closeModal();
+};
+
+const renderListeningResult = (item) => {
+  const result = item.result || {};
+  const feedbackClass = result.correct ? 'correct' : result.close ? 'close' : 'wrong';
+  const morphology = Array.isArray(result.morphology) ? result.morphology : [];
+  return `
+    <section class="listening-result ${feedbackClass}">
+      <div class="listening-result-head"><span>${icon(result.correct ? 'check' : result.close ? 'brain' : 'repeat')}</span><div><strong>${escapeHtml(result.verdict || (result.correct ? 'Message caught' : result.close ? 'Nearly there' : 'Listen once more next time'))}</strong><p>${escapeHtml(result.message || '')}</p></div></div>
+      <div class="listening-transcript" lang="pl"><span>TRANSCRIPT</span><p>${polishInteractive(item.phrase.pl)}</p></div>
+      <div class="listening-translation"><span><strong>EN</strong> ${escapeHtml(item.phrase.en)}</span>${state.settings.showDutch ? `<span lang="nl"><strong>NL</strong> ${escapeHtml(item.phrase.nl)}</span>` : ''}</div>
+      ${morphology.length ? `<div class="listening-form-repairs">${morphology.map((detail) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(detail.expected || detail.learner || '')}" data-sentence="${escapeHtml(item.phrase.pl)}"><strong>${escapeHtml(detail.title || 'Form detail')}</strong><span>${escapeHtml(detail.en || '')}</span></button>`).join('')}</div>` : ''}
+      <div class="listening-result-actions">
+        <button class="secondary-button compact" type="button" data-action="listening-play" data-speed="natural">${icon('volume')} Hear again</button>
+        <button class="primary-button" type="button" data-action="listening-next">${activeListeningLab.index + 1 >= activeListeningLab.items.length ? 'See summary' : 'Next sound'} ${icon('arrow')}</button>
+      </div>
+    </section>
+  `;
+};
+
+const renderListeningLabSummary = () => {
+  const stats = ensureListeningStats();
+  const attempts = activeListeningLab.items.length;
+  const independent = activeListeningLab.items.filter((item) => item.result?.correct && item.played <= 2 && !item.revealed).length;
+  const natural = activeListeningLab.items.filter((item) => item.speedPlays.natural > 0).length;
+  return `
+    <div class="listening-summary">
+      <span class="summary-orbit">${icon('headphones')}</span>
+      <p class="eyebrow">LISTENING SESSION COMPLETE</p>
+      <h2>You caught ${activeListeningLab.correct} of ${attempts} messages.</h2>
+      <p>Blisko recorded speed, replays, dictation detail, and whether the transcript was needed. Those signals now shape future listening reviews.</p>
+      <div class="listening-summary-grid">
+        <div><strong>${activeListeningLab.correct}</strong><span>clear catches</span></div>
+        <div><strong>${independent}</strong><span>independent</span></div>
+        <div><strong>${natural}</strong><span>heard naturally</span></div>
+        <div><strong>${stats.replays}</strong><span>lifetime replays</span></div>
+      </div>
+      <div class="button-row listening-summary-actions">
+        <button class="secondary-button" type="button" data-action="open-sound-lab">${icon('volume')} Train sound contrasts</button>
+        <button class="primary-button" type="button" data-action="close-listening-lab">Return to Learn ${icon('arrow')}</button>
+      </div>
+    </div>
+  `;
+};
+
+const renderListeningLabModal = () => {
+  if (!activeListeningLab) return;
+  const complete = activeListeningLab.index >= activeListeningLab.items.length;
+  const item = currentListeningItem();
+  modalRoot.innerHTML = `
+    <div class="session-modal listening-lab-modal" role="dialog" aria-modal="true" aria-label="Listening lab">
+      <header class="session-topbar listening-topbar">
+        <button class="icon-button" type="button" data-action="close-listening-lab" aria-label="Close listening lab">${icon('close')}</button>
+        <div class="session-progress-wrap">
+          <div class="progress-track"><span style="width:${complete ? 100 : Math.round(activeListeningLab.index / activeListeningLab.items.length * 100)}%"></span></div>
+          <span>${complete ? activeListeningLab.items.length : activeListeningLab.index + 1} / ${activeListeningLab.items.length}</span>
+        </div>
+        <span class="session-score">${icon('headphones')} ${activeListeningLab.correct}</span>
+      </header>
+      <main class="session-stage listening-stage">
+        ${complete ? renderListeningLabSummary() : `
+          <article class="card listening-exercise-card">
+            <div class="listening-kicker"><span>${item.type === 'dictation' ? 'WRITE WHAT YOU HEAR' : item.type === 'shadow' ? 'SHADOW THE RHYTHM' : 'CATCH THE MEANING'}</span><span>${escapeHtml(item.phrase.topic)}</span></div>
+            <h2>${item.played ? 'Listen again only if you need it.' : 'The sentence stays hidden until you answer.'}</h2>
+            <p>${item.type === 'dictation' ? 'Type the Polish sounds you can recover. Missing diacritics are accepted and explained.' : item.type === 'shadow' ? 'Hear the full line, reveal it only when needed, then say it in one breath.' : 'Choose the intention. Do not chase every individual sound.'}</p>
+
+            <div class="listening-orb-wrap">
+              <button class="listening-orb ${item.played ? 'played' : ''}" type="button" data-action="listening-play" data-speed="${escapeHtml(item.lastSpeed)}" aria-label="Play Polish sentence">${icon('volume')}<span>${item.played ? `${item.played} play${item.played === 1 ? '' : 's'}` : 'Play'}</span></button>
+            </div>
+
+            <div class="speed-ladder" aria-label="Listening speed">
+              ${[
+                ['slow', 'Slow', 'clarity'],
+                ['natural', 'Natural', 'family pace'],
+                ['fast', 'Stretch', 'real-life pressure'],
+              ].map(([speed, label, detail]) => `<button class="${item.lastSpeed === speed ? 'active' : ''}" type="button" data-action="listening-play" data-speed="${speed}"><strong>${label}</strong><span>${detail}</span><small>${item.speedPlays[speed] || 0}×</small></button>`).join('')}
+            </div>
+
+            ${item.type === 'meaning' ? `
+              <div class="listening-answer-options">
+                ${item.options.map((option, index) => `<button type="button" data-action="listening-choice" data-option="${escapeHtml(option)}" ${!item.played || item.answered ? 'disabled' : ''}><span>${String.fromCharCode(65 + index)}</span><strong>${escapeHtml(option)}</strong></button>`).join('')}
+              </div>
+            ` : item.type === 'dictation' ? `
+              <form class="answer-input-wrap listening-dictation-form" data-action="listening-dictation-form">
+                <input id="listening-answer" class="answer-input" name="answer" type="text" value="${escapeHtml(item.typed || '')}" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Type what you hear…" ${!item.played || item.answered ? 'disabled' : ''}>
+                <button class="primary-button" type="submit" ${!item.played || item.answered ? 'disabled' : ''}>Check</button>
+              </form>
+            ` : `
+              <div class="shadow-panel">
+                ${item.revealed ? `<div class="shadow-model" lang="pl">${polishInteractive(item.phrase.pl)}</div>` : `<button class="secondary-button" type="button" data-action="listening-reveal" ${!item.played ? 'disabled' : ''}>Reveal line for shadowing</button>`}
+                ${item.revealed ? `<p>Say it once with the model, then once without looking. Rate the rhythm honestly.</p><div class="shadow-ratings"><button type="button" data-action="listening-shadow-rate" data-rating="0">Not yet</button><button type="button" data-action="listening-shadow-rate" data-rating="1">Needed the line</button><button type="button" data-action="listening-shadow-rate" data-rating="2">One breath</button></div>` : '<p>The reveal is recorded as support, not failure.</p>'}
+              </div>
+            `}
+
+            ${item.answered ? renderListeningResult(item) : `<div class="listening-footnote">${icon('info')} <span>Playback uses the best Polish voice installed in your browser. You can choose another voice in Settings.</span></div>`}
+          </article>
+        `}
+      </main>
+    </div>
+  `;
+  document.body.style.overflow = 'hidden';
+  hydrateStaticIcons(modalRoot);
+  requestAnimationFrame(() => document.getElementById('listening-answer')?.focus({ preventScroll: true }));
+};
+
+const playListeningItem = (speed = 'natural') => {
+  const item = currentListeningItem();
+  if (!item || item.answered && !activeListeningLab) return;
+  item.played += 1;
+  item.lastSpeed = ['slow', 'natural', 'fast'].includes(speed) ? speed : 'natural';
+  item.speedPlays[item.lastSpeed] = Number(item.speedPlays[item.lastSpeed] || 0) + 1;
+  const stats = ensureListeningStats();
+  if (item.played > 1) stats.replays += 1;
+  speak(item.phrase.pl, { speed: item.lastSpeed });
+  renderListeningLabModal();
+};
+
+const recordListeningItemResult = (item, result, { skillKey = 'listening', rating = null } = {}) => {
+  if (!item || item.answered) return;
+  item.answered = true;
+  item.result = result;
+  const stats = ensureListeningStats();
+  stats.attempts += 1;
+  stats.correct += result.correct ? 1 : 0;
+  stats.lastAt = new Date().toISOString();
+  if (item.type === 'dictation') {
+    stats.dictations += 1;
+    stats.dictationCorrect += result.correct ? 1 : 0;
+  }
+  if (item.lastSpeed === 'natural') {
+    stats.naturalSpeedAttempts += 1;
+    stats.naturalSpeedCorrect += result.correct ? 1 : 0;
+  }
+  if (item.lastSpeed === 'fast') {
+    stats.fastSpeedAttempts += 1;
+    stats.fastSpeedCorrect += result.correct ? 1 : 0;
+  }
+  if (skillKey === 'pronunciation') stats.shadowing += 1;
+
+  const effectiveRating = rating ?? (result.correct ? 2 : result.close ? 1 : 0);
+  reviewItem(state, item.phrase.id, effectiveRating, {
+    type: skillKey === 'pronunciation' ? 'speaking' : 'listening',
+    skillKey,
+    correct: result.correct,
+    score: result.score ?? (result.correct ? 0.86 : result.close ? 0.58 : 0.18),
+    source: item.type === 'dictation' ? 'listening dictation' : item.type === 'shadow' ? 'listening shadowing' : 'listening meaning',
+    errorType: result.errorType || null,
+  });
+  activeListeningLab.correct += result.correct ? 1 : 0;
+  activeListeningLab.close += result.close ? 1 : 0;
+  addActivity(state, { minutes: 0.6, speaking: skillKey === 'pronunciation' ? 1 : 0 });
+  save();
+  renderListeningLabModal();
+};
+
+const answerListeningChoice = (option) => {
+  const item = currentListeningItem();
+  if (!item || item.answered || !item.played) return;
+  const expected = primaryTranslation(item.phrase);
+  const result = evaluateAnswer(option, expected, { language: primaryLanguage() });
+  recordListeningItemResult(item, {
+    ...result,
+    verdict: result.correct ? 'Meaning caught' : 'The sound pointed somewhere else',
+    message: result.correct ? 'You recovered the intention without seeing the Polish text.' : `The message meant “${expected}”. Listen once more while reading the transcript.`,
+  });
+};
+
+const submitListeningDictation = (form) => {
+  const item = currentListeningItem();
+  if (!item || item.answered || !item.played) return;
+  const value = String(new FormData(form).get('answer') || '').trim();
+  if (!value) return;
+  item.typed = value;
+  const result = evaluateAnswer(value, item.phrase.pl, {
+    language: 'pl',
+    acceptedAnswers: item.phrase.acceptedAnswers || [],
+    grammar: item.phrase.grammar || [],
+    source: item.phrase,
+  });
+  recordListeningItemResult(item, result);
+};
+
+const revealListeningShadow = () => {
+  const item = currentListeningItem();
+  if (!item || item.answered || !item.played) return;
+  item.revealed = true;
+  renderListeningLabModal();
+};
+
+const rateListeningShadow = (rating) => {
+  const item = currentListeningItem();
+  if (!item || item.answered || !item.revealed) return;
+  const safe = Math.max(0, Math.min(2, Number(rating) || 0));
+  const score = safe === 2 ? 0.86 : safe === 1 ? 0.58 : 0.24;
+  recordListeningItemResult(item, {
+    correct: safe >= 1,
+    close: safe === 1,
+    score,
+    errorType: safe === 2 ? 'shadow_independent' : safe === 1 ? 'shadow_supported' : 'shadow_retry',
+    verdict: safe === 2 ? 'Rhythm held together' : safe === 1 ? 'Supported shadow completed' : 'Keep the phrase shorter for now',
+    message: safe === 2
+      ? 'You produced the line in one breath after listening.'
+      : safe === 1
+        ? 'The visible line helped. Blisko will keep pronunciation practice supported for now.'
+        : 'This sound block will return in a shorter, slower form.',
+    expected: item.phrase.pl,
+  }, { skillKey: 'pronunciation', rating: safe === 2 ? 2 : safe === 1 ? 1 : 0 });
+};
+
+const advanceListeningLab = () => {
+  if (!activeListeningLab) return;
+  const item = currentListeningItem();
+  if (item && !item.answered) return;
+  activeListeningLab.index += 1;
+  if (activeListeningLab.index >= activeListeningLab.items.length && !activeListeningLab.summarySaved) {
+    const stats = ensureListeningStats();
+    stats.sessions += 1;
+    stats.lastAt = new Date().toISOString();
+    activeListeningLab.summarySaved = true;
+    addActivity(state, { minutes: Math.max(3, Math.round((Date.now() - activeListeningLab.startedAt) / 60_000)) });
+    save({ immediate: true });
+  }
+  renderListeningLabModal();
+};
+
+const renderSoundLabGallery = () => `
+  <header class="modal-header">
+    <div><p class="eyebrow">POLISH SOUND LAB</p><h2>Train contrasts Dutch ears tend to merge.</h2><p>Each lesson combines a listening anchor, bilingual explanation, examples, and a two-question sound check.</p></div>
+    <button class="modal-close" type="button" data-action="close-sound-lab" aria-label="Close sound lab">${icon('close')}</button>
+  </header>
+  <div class="modal-body sound-gallery-body">
+    <section class="sound-overview-card">
+      <div><strong>${ensureSoundStats().completedLessons.length} / ${SOUND_LESSONS.length}</strong><span>sound families checked</span></div>
+      <p>These scores stay separate from vocabulary. Recognizing a sentence does not automatically mean its sounds are stable.</p>
+    </section>
+    <div class="sound-lesson-grid">
+      ${SOUND_LESSONS.map((lesson) => {
+        const progress = ensureSoundProgress(lesson.id);
+        return `<button class="sound-lesson-card" type="button" data-action="open-sound-lesson" data-lesson="${escapeHtml(lesson.id)}"><span class="sound-symbol">${escapeHtml(lesson.symbol)}</span><strong>${escapeHtml(lesson.title)}</strong><p>${escapeHtml(lesson.en)}</p><div class="sound-progress"><span class="progress-track"><span style="width:${Math.round(progress.confidence * 100)}%"></span></span><b>${Math.round(progress.confidence * 100)}%</b></div></button>`;
+      }).join('')}
+    </div>
+  </div>
+  <footer class="modal-footer"><button class="primary-button" type="button" data-action="close-sound-lab">Done</button></footer>
+`;
+
+const renderSoundLesson = () => {
+  const lesson = getSoundLesson(activeSoundLab.lessonId);
+  const quiz = lesson.quiz[activeSoundLab.quizIndex] || lesson.quiz[0];
+  const progress = ensureSoundProgress(lesson.id);
+  return `
+    <header class="modal-header sound-lesson-header">
+      <button class="icon-button" type="button" data-action="sound-back" aria-label="Back to sound lessons">${icon('arrow')}</button>
+      <div><p class="eyebrow">${escapeHtml(lesson.symbol)} · SOUND ${activeSoundLab.quizIndex + 1} OF ${lesson.quiz.length}</p><h2>${escapeHtml(lesson.title)}</h2><p>${escapeHtml(lesson.en)}</p>${state.settings.showDutch ? `<small lang="nl">${escapeHtml(lesson.nl)}</small>` : ''}</div>
+      <button class="modal-close" type="button" data-action="close-sound-lab" aria-label="Close sound lab">${icon('close')}</button>
+    </header>
+    <div class="modal-body sound-lesson-body">
+      <section class="sound-comparison-card"><span>${icon('alert')}</span><div><strong>Dutch-ear warning</strong><p>${escapeHtml(lesson.dutchTrap)}</p></div></section>
+      <section class="sound-examples">
+        ${lesson.examples.map((example) => `<button type="button" data-action="sound-example" data-text="${escapeHtml(example.word)}"><span class="sound-example-word">${escapeHtml(example.word)}</span><span>${escapeHtml(example.en)}${state.settings.showDutch ? ` · ${escapeHtml(example.nl)}` : ''}</span><small>${escapeHtml(example.cue)}</small>${icon('volume')}</button>`).join('')}
+      </section>
+      <section class="sound-quiz-card ${activeSoundLab.result ? (activeSoundLab.result.correct ? 'correct' : 'wrong') : ''}">
+        <div class="sound-quiz-head"><div><span>QUICK SOUND CHECK</span><h3>Which spelling did you hear?</h3></div><button class="listening-orb small" type="button" data-action="sound-quiz-play">${icon('volume')}<span>${activeSoundLab.plays ? `${activeSoundLab.plays}×` : 'Play'}</span></button></div>
+        <div class="sound-quiz-options">
+          ${quiz.options.map((option) => {
+            const selected = activeSoundLab.selected === option;
+            const isCorrect = option === quiz.answer;
+            const className = activeSoundLab.result ? isCorrect ? 'correct' : selected ? 'wrong' : '' : '';
+            return `<button class="${className}" type="button" data-action="sound-quiz-answer" data-option="${escapeHtml(option)}" ${!activeSoundLab.plays || activeSoundLab.result ? 'disabled' : ''}><strong>${escapeHtml(option)}</strong></button>`;
+          }).join('')}
+        </div>
+        ${activeSoundLab.result ? `<div class="sound-quiz-feedback"><strong>${activeSoundLab.result.correct ? 'Contrast caught' : `The model said ${escapeHtml(quiz.answer)}`}</strong><p>${activeSoundLab.result.correct ? 'This sound distinction has stronger evidence now.' : 'Replay the model and compare the sound block rather than every letter.'}</p><button class="primary-button" type="button" data-action="sound-next">${activeSoundLab.quizIndex + 1 >= lesson.quiz.length ? 'Finish lesson' : 'Next check'} ${icon('arrow')}</button></div>` : '<p class="sound-quiz-note">Play the audio before choosing. The written examples above remain visible because this lesson trains sound-to-spelling mapping.</p>'}
+      </section>
+      <div class="sound-mastery-strip"><span>Current evidence</span><div class="progress-track"><span style="width:${Math.round(progress.confidence * 100)}%"></span></div><b>${Math.round(progress.confidence * 100)}%</b></div>
+    </div>
+  `;
+};
+
+const renderSoundLabModal = () => {
+  if (!activeSoundLab) return;
+  modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal wide sound-lab-modal" role="dialog" aria-modal="true" aria-label="Polish sound lab">${activeSoundLab.lessonId ? renderSoundLesson() : renderSoundLabGallery()}</section></div>`;
+  document.body.style.overflow = 'hidden';
+  hydrateStaticIcons(modalRoot);
+};
+
+const openSoundLab = (lessonId = null) => {
+  closeMorphologyLens();
+  activeListeningLab = null;
+  activeSoundLab = { lessonId, quizIndex: 0, selected: null, result: null, plays: 0 };
+  renderSoundLabModal();
+};
+
+const closeSoundLab = () => {
+  window.speechSynthesis?.cancel?.();
+  activeSoundLab = null;
+  closeModal();
+};
+
+const playSoundQuiz = () => {
+  if (!activeSoundLab?.lessonId) return;
+  const lesson = getSoundLesson(activeSoundLab.lessonId);
+  const quiz = lesson.quiz[activeSoundLab.quizIndex];
+  if (!quiz) return;
+  activeSoundLab.plays += 1;
+  speak(quiz.audio, { speed: 'natural' });
+  renderSoundLabModal();
+};
+
+const answerSoundQuiz = (option) => {
+  if (!activeSoundLab?.lessonId || activeSoundLab.result || !activeSoundLab.plays) return;
+  const lesson = getSoundLesson(activeSoundLab.lessonId);
+  const quiz = lesson.quiz[activeSoundLab.quizIndex];
+  const correct = option === quiz.answer;
+  activeSoundLab.selected = option;
+  activeSoundLab.result = { correct };
+  const progress = ensureSoundProgress(lesson.id);
+  const stats = ensureSoundStats();
+  progress.attempts += 1;
+  progress.correct += correct ? 1 : 0;
+  progress.confidence = clamp(progress.confidence * 0.72 + (correct ? 0.92 : 0.18) * 0.28);
+  progress.lastAt = new Date().toISOString();
+  stats.attempts += 1;
+  stats.correct += correct ? 1 : 0;
+  stats.lastAt = progress.lastAt;
+  recordSkillEvidence(state, 'pronunciation', correct ? 0.84 : 0.24, { correct, source: `sound lesson ${lesson.id}` });
+  addActivity(state, { minutes: 0.4 });
+  save();
+  renderSoundLabModal();
+};
+
+const advanceSoundQuiz = () => {
+  if (!activeSoundLab?.lessonId || !activeSoundLab.result) return;
+  const lesson = getSoundLesson(activeSoundLab.lessonId);
+  if (activeSoundLab.quizIndex + 1 >= lesson.quiz.length) {
+    const stats = ensureSoundStats();
+    if (!stats.completedLessons.includes(lesson.id)) stats.completedLessons.push(lesson.id);
+    save();
+    activeSoundLab = { lessonId: null, quizIndex: 0, selected: null, result: null, plays: 0 };
+  } else {
+    activeSoundLab.quizIndex += 1;
+    activeSoundLab.selected = null;
+    activeSoundLab.result = null;
+    activeSoundLab.plays = 0;
+  }
+  renderSoundLabModal();
 };
 
 const renderView = () => {
@@ -560,7 +1199,7 @@ function renderDashboard() {
             <span class="pattern-label">Sentence pattern of the day</span>
             <button class="speaker-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}" aria-label="Listen to ${escapeHtml(sentence)}">${icon('volume')}</button>
           </div>
-          <div class="pattern-sentence">${escapeHtml(sentence)}</div>
+          <div class="pattern-sentence" lang="pl">${polishInteractive(sentence)}</div>
           <div class="pattern-translation">NL ${escapeHtml(translationNl)} · EN ${escapeHtml(translationEn)}</div>
           <div class="slot-row">
             ${pattern.slots.destination.map((option) => `
@@ -648,6 +1287,12 @@ function renderLearn() {
             <p>Record short, useful phrases locally and compare rhythm rather than chasing a perfect accent.</p>
             <span class="focus-footer"><span>Private on this device</span><b>Speak ${icon('arrow')}</b></span>
           </button>
+          <button class="card focus-card" type="button" data-action="open-listening-lab" style="--focus:var(--blue);--focus-soft:var(--blue-soft)">
+            <span class="focus-icon">${icon('headphones')}</span>
+            <h3>Listening speed ladder</h3>
+            <p>Catch useful family phrases at slow, natural, and stretch speed without seeing the transcript first.</p>
+            <span class="focus-footer"><span>Dictation · meaning · shadowing</span><b>Listen ${icon('arrow')}</b></span>
+          </button>
         </div>
       </section>
 
@@ -690,7 +1335,7 @@ function renderLearn() {
           </div>
           <div class="pattern-stage">
             <span class="pattern-label">${escapeHtml(pattern.subtitle)}</span>
-            <div class="big-pattern">${escapeHtml(sentence)}</div>
+            <div class="big-pattern" lang="pl">${polishInteractive(sentence)}</div>
             <div class="big-translation">NL ${escapeHtml(translationNl)} · EN ${escapeHtml(translationEn)}</div>
             <div class="slot-builder">
               ${Object.entries(pattern.slots).map(([slot, options]) => options.map((option) => `
@@ -705,6 +1350,24 @@ function renderLearn() {
             </div>
           </div>
         </article>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <div><h2>Polish sound and form intelligence</h2><p>Train what Dutch ears merge, then tap endings to see why Polish changes shape.</p></div>
+        </div>
+        <div class="intelligence-grid">
+          <button class="card intelligence-card sound" type="button" data-action="open-sound-lab">
+            <span class="intelligence-icon">${icon('volume')}</span>
+            <div><span class="progress-overline">8 SOUND FAMILIES</span><h3>Hear the difference before you imitate it.</h3><p>ł versus l, hard and soft consonants, nasal vowels, y versus i, and difficult clusters.</p></div>
+            <span class="intelligence-arrow">${icon('arrow')}</span>
+          </button>
+          <button class="card intelligence-card form" type="button" data-action="open-morphology" data-word="Polski" data-sentence="Jutro jadę do Polski.">
+            <span class="intelligence-icon">${icon('brain')}</span>
+            <div><span class="progress-overline">TAP-TO-EXPLAIN GRAMMAR</span><h3>Why “do Polski” and not “do Polska”?</h3><p>Open the new Form Lens for a word-by-word explanation with Dutch and English comparisons.</p></div>
+            <span class="intelligence-arrow">${icon('arrow')}</span>
+          </button>
+        </div>
       </section>
 
       <section>
@@ -748,6 +1411,7 @@ function renderReview() {
             <p>${due.length ? 'The queue favours items you forget, but changes the sentence around them so you learn flexible use rather than card recognition.' : `The coach can introduce a few high-value phrases now. Your next scheduled review is ${nextDue ? formatDateRelative(nextDue.progress.dueAt) : 'after your first session'}.`}</p>
             <div class="button-row">
               <button class="primary-button" type="button" data-action="start-session" data-mode="review">${icon('repeat')} ${due.length ? 'Review now' : 'Start a memory session'}</button>
+              <button class="secondary-button" type="button" data-action="open-listening-lab">${icon('headphones')} Listening review</button>
               <button class="secondary-button" type="button" data-action="start-session" data-mode="speaking">${icon('mic')} Speaking review</button>
             </div>
           </div>
@@ -921,7 +1585,7 @@ const renderConversationMessage = (message, persona) => {
     <div class="chat-message ${isUser ? 'user' : 'role'}">
       <div class="message-meta"><span>${escapeHtml(name)}</span><span>·</span><span>${isUser ? 'your reply' : escapeHtml(persona.polishRole)}</span></div>
       <div class="message-bubble">
-        <p class="message-polish">${escapeHtml(message.text)}</p>
+        <p class="message-polish" lang="pl">${polishInteractive(message.text)}</p>
         ${!isUser && state.conversation.level !== 'stretch' && (state.settings.showDutch || state.settings.showEnglish) ? `<p class="message-translation">${state.settings.showDutch ? `NL ${escapeHtml(message.nl || '')}` : ''}${state.settings.showDutch && state.settings.showEnglish ? ' · ' : ''}${state.settings.showEnglish ? `EN ${escapeHtml(message.en || '')}` : ''}</p>` : ''}
       </div>
       ${!isUser ? `<div class="message-actions"><button type="button" data-action="speak" data-text="${escapeHtml(message.text)}">${icon('volume')} Listen</button></div>` : ''}
@@ -1117,7 +1781,7 @@ const renderTutorReply = (reply, key = 'welcome') => `
     ${state.settings.showDutch && reply.nl ? `<p class="tutor-language-secondary"><strong>NL</strong> ${escapeHtml(reply.nl)}</p>` : ''}
     ${(reply.examples || []).map((example) => `
       <div class="example-block">
-        <strong>${escapeHtml(example[0] || '')}</strong>
+        <strong lang="pl">${polishInteractive(example[0] || '')}</strong>
         <span>${state.settings.showEnglish ? `EN ${escapeHtml(example[2] || '')}` : ''}${state.settings.showDutch && state.settings.showEnglish ? ' · ' : ''}${state.settings.showDutch ? `NL ${escapeHtml(example[1] || '')}` : ''}</span>
         <button class="text-button" style="margin-top:5px" type="button" data-action="speak" data-text="${escapeHtml(example[0] || '')}">${icon('volume')} Listen</button>
       </div>
@@ -1360,6 +2024,13 @@ function renderProgress() {
   const independenceRate = evidenceReviews.length ? independentCorrect / evidenceReviews.length : 0;
   const hintLevelCounts = state.stats.hintLevelCounts || {};
   const totalHintRequests = Math.max(1, Object.values(hintLevelCounts).reduce((sum, value) => sum + Number(value || 0), 0));
+  const listeningStats = ensureListeningStats();
+  const soundStats = ensureSoundStats();
+  const naturalListeningAccuracy = ratio(listeningStats.naturalSpeedCorrect, listeningStats.naturalSpeedAttempts);
+  const fastListeningAccuracy = ratio(listeningStats.fastSpeedCorrect, listeningStats.fastSpeedAttempts);
+  const dictationAccuracy = ratio(listeningStats.dictationCorrect, listeningStats.dictations);
+  const soundAccuracy = ratio(soundStats.correct, soundStats.attempts);
+  const soundCompletion = Math.round((soundStats.completedLessons.length / Math.max(1, SOUND_LESSONS.length)) * 100);
 
   return `
     <div class="view section-stack progress-page">
@@ -1450,6 +2121,24 @@ function renderProgress() {
           <div class="hint-level-distribution" aria-label="Hint request distribution">
             ${[1,2,3,4,5].map((level) => `<span title="Hint ${level}: ${Number(hintLevelCounts[level] || 0)} requests"><i style="height:${Math.max(8, Number(hintLevelCounts[level] || 0) / totalHintRequests * 100)}%"></i><b>${level}</b></span>`).join('')}
           </div>
+        </article>
+
+        <article class="card listening-intelligence-card">
+          <div class="listening-intelligence-head">
+            <div><span class="progress-overline">LISTENING INTELLIGENCE<small lang="nl">Luisterintelligentie</small></span><h3>${listeningStats.attempts ? `${naturalListeningAccuracy}% at natural speed` : 'Build a real listening baseline'}</h3><p><span>Blisko now separates slow recognition, natural-speed understanding, dictation detail, and sound contrasts.</span><small class="secondary-sentence" lang="nl">Blisko meet langzaam herkennen, natuurlijk tempo, dicteerdetail en klankcontrasten afzonderlijk.</small></p></div>
+            <button class="secondary-button compact" type="button" data-action="open-listening-lab">${icon('headphones')} Start listening lab</button>
+          </div>
+          <div class="listening-evidence-grid">
+            <div><span>Natural speed</span><strong>${listeningStats.naturalSpeedAttempts ? `${naturalListeningAccuracy}%` : '—'}</strong><small>${listeningStats.naturalSpeedAttempts} checks</small></div>
+            <div><span>Stretch speed</span><strong>${listeningStats.fastSpeedAttempts ? `${fastListeningAccuracy}%` : '—'}</strong><small>${listeningStats.fastSpeedAttempts} checks</small></div>
+            <div><span>Dictation detail</span><strong>${listeningStats.dictations ? `${dictationAccuracy}%` : '—'}</strong><small>${listeningStats.dictations} attempts</small></div>
+            <div><span>Sound contrasts</span><strong>${soundStats.attempts ? `${soundAccuracy}%` : '—'}</strong><small>${soundStats.completedLessons.length}/${SOUND_LESSONS.length} lessons</small></div>
+          </div>
+          <div class="listening-evidence-bars">
+            <div><span>Natural family pace</span><div class="progress-track"><span style="width:${naturalListeningAccuracy}%"></span></div><b>${naturalListeningAccuracy}%</b></div>
+            <div><span>Sound-family coverage</span><div class="progress-track"><span style="width:${soundCompletion}%"></span></div><b>${soundCompletion}%</b></div>
+          </div>
+          <div class="button-row"><button class="text-button" type="button" data-action="open-sound-lab">Open Polish Sound Lab ${icon('arrow')}</button><span class="listening-replay-note">${listeningStats.replays} replays used · replaying is evidence, not failure</span></div>
         </article>
       </section>
 
@@ -1633,7 +2322,7 @@ function renderWordRows() {
     const progress = state.progress.items[word.id];
     return `
       <button class="word-row" type="button" data-action="open-word" data-word="${word.id}">
-        <span class="word-polish"><strong>${escapeHtml(word.pl)}</strong><span>${escapeHtml(word.example)}</span></span>
+        <span class="word-polish"><strong lang="pl">${escapeHtml(word.pl)}</strong><span lang="pl">${escapeHtml(word.example)}</span></span>
         <span class="word-translation"><strong>${escapeHtml(word.nl)}</strong><span>${escapeHtml(word.en)}</span></span>
         <span class="word-kind">${escapeHtml(word.type)}</span>
         <span class="word-topic">${escapeHtml(word.topic)}</span>
@@ -2166,6 +2855,10 @@ const renderExercise = (exercise) => {
     ? (exercise.safeHint || (exercise.itemType === 'word' ? exercise.source?.type : 'Translation hidden until you answer.'))
     : (exercise.subText || '');
 
+  const mainTextMarkup = ((exercise.answerKind === 'meaning' && exercise.type !== 'listening') || exercise.type === 'speaking')
+    ? polishInteractive(exercise.mainText)
+    : escapeHtml(exercise.mainText);
+
   if (exercise.type === 'choice' || exercise.type === 'listening') {
     interaction = `
       ${exercise.type === 'listening' ? `<button class="listen-button" type="button" data-action="speak" data-text="${escapeHtml(exercise.audioText)}" aria-label="Play Polish audio">${icon('volume')}</button>` : ''}
@@ -2234,7 +2927,7 @@ const renderExercise = (exercise) => {
       <div class="exercise-eyebrow"><span>${escapeHtml(exercise.instruction)}</span><span class="exercise-skill">${escapeHtml(exercise.skill)}</span></div>
       ${adaptiveSupportNote}
       <p class="exercise-prompt">${exercise.type === 'listening' ? 'Catch the message, not every sound.' : exercise.type === 'speaking' ? 'Read once, then look away if you can.' : 'Use the whole phrase as a speaking block.'}</p>
-      <div class="exercise-main-text">${escapeHtml(exercise.mainText)}</div>
+      <div class="exercise-main-text" ${((exercise.answerKind === 'meaning' && exercise.type !== 'listening') || exercise.type === 'speaking') ? 'lang="pl"' : ''}>${mainTextMarkup}</div>
       ${visibleSubText ? `<div class="exercise-subtext${testsMeaning && !session.answered ? ' protected' : ''}">${escapeHtml(visibleSubText)}</div>` : '<div class="exercise-subtext empty" aria-hidden="true"></div>'}
       ${renderSessionHintPanel(exercise)}
       ${session.hintLevel === 5 && !session.answered ? '' : interaction}
@@ -2266,13 +2959,17 @@ const renderExerciseFeedback = (exercise) => {
   const conceptExplanation = concept
     ? `<div class="feedback-coach-note"><strong>${escapeHtml(concept.title || 'Why this form works')}</strong><p>${escapeHtml(state.settings.showEnglish === false ? concept.nl : concept.en)}</p>${state.settings.showDutch && state.settings.showEnglish && concept.nl ? `<small lang="nl">${escapeHtml(concept.nl)}</small>` : ''}${concept.commonMistake ? `<em>${escapeHtml(concept.commonMistake)}</em>` : ''}</div>`
     : '';
+  const morphologyExplanation = Array.isArray(result.morphology) && result.morphology.length
+    ? `<div class="feedback-morphology"><div class="feedback-morphology-head"><span>${icon('brain')}</span><div><strong>Form detective</strong><small>Tap a repair to inspect the ending in context.</small></div></div>${result.morphology.map((detail) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(detail.expected || detail.learner || '')}" data-sentence="${escapeHtml(result.expected || exercise.answer || '')}"><span>${escapeHtml(detail.title || 'Polish form')}</span><p>${escapeHtml(detail.en || '')}</p>${state.settings.showDutch && detail.nl ? `<small lang="nl">${escapeHtml(detail.nl)}</small>` : ''}</button>`).join('')}</div>`
+    : '';
   return `
     <div class="feedback-box ${feedbackClass}">
       <div class="feedback-verdict-row"><h4>${escapeHtml(verdict)}</h4>${errorLabel ? `<span class="feedback-error-chip">${escapeHtml(errorLabel)}</span>` : ''}</div>
       <p>${escapeHtml(result.message || '')}</p>
       ${secondaryFeedback}
-      ${showModel ? `<div class="feedback-model-answer"><span>Model answer</span><strong>${escapeHtml(result.expected || exercise.answer)}</strong></div>` : ''}
+      ${showModel ? `<div class="feedback-model-answer"><span>Model answer · tap a word to explain it</span><strong lang="pl">${polishInteractive(result.expected || exercise.answer)}</strong></div>` : ''}
       ${meaningReveal}
+      ${morphologyExplanation}
       ${conceptExplanation}
       ${hintSummary}
     </div>
@@ -3151,6 +3848,7 @@ const advanceRapidGame = (confidenceState = null) => {
 };
 
 const openSettings = () => {
+  const voices = refreshPolishVoices();
   openModal(`
     <header class="modal-header">
       <div><h2>Coach settings</h2><p>Personalization and learning data stay on this device by default.</p></div>
@@ -3177,7 +3875,11 @@ const openSettings = () => {
         <div class="toggle-row"><span class="toggle-copy"><strong>Show English support</strong><span>Useful for grammar terminology and direct contrasts</span></span><label class="switch"><input id="settings-english" type="checkbox" ${state.settings.showEnglish ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Auto-speak simulator turns</strong><span>Play each new Polish line automatically</span></span><label class="switch"><input id="settings-auto-speak" type="checkbox" ${state.settings.autoSpeak ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Gentle haptics</strong><span>Small vibration feedback on supported mobile devices</span></span><label class="switch"><input id="settings-haptics" type="checkbox" ${state.settings.haptics ? 'checked' : ''}><span class="switch-track"></span></label></div>
-        <div class="form-field" style="margin-top:12px"><label for="settings-rate">Polish speech speed · ${Math.round(state.settings.speechRate * 100)}%</label><input id="settings-rate" type="range" min="0.55" max="1.05" step="0.05" value="${state.settings.speechRate}"></div>
+        <div class="form-grid audio-settings-grid" style="margin-top:12px">
+          <div class="form-field"><label for="settings-rate">Base Polish speech speed · ${Math.round(state.settings.speechRate * 100)}%</label><input id="settings-rate" type="range" min="0.55" max="1.05" step="0.05" value="${state.settings.speechRate}"><small>The Listening Lab builds slow, natural, and stretch speeds around this baseline.</small></div>
+          <div class="form-field"><label for="settings-listening-speed">Default listening speed</label><select id="settings-listening-speed"><option value="slow" ${state.settings.listeningDefaultSpeed === 'slow' ? 'selected' : ''}>Slow · clarity first</option><option value="natural" ${state.settings.listeningDefaultSpeed === 'natural' ? 'selected' : ''}>Natural · family pace</option><option value="fast" ${state.settings.listeningDefaultSpeed === 'fast' ? 'selected' : ''}>Stretch · real-life pressure</option></select></div>
+          <div class="form-field full"><label for="settings-voice">Polish voice</label><select id="settings-voice"><option value="">Best available automatically</option>${voices.map((voice) => `<option value="${escapeHtml(voice.voiceURI)}" ${state.settings.speechVoiceURI === voice.voiceURI ? 'selected' : ''}>${escapeHtml(voice.name)}${voice.localService ? ' · on device' : ''}</option>`).join('')}</select><small>${voices.length ? `${voices.length} Polish voice${voices.length === 1 ? '' : 's'} detected on this device.` : 'No dedicated Polish voice was reported yet. Android may load voices after the first playback.'}</small></div>
+        </div>
       </section>
 
       <section class="settings-section settings-evidence-section">
@@ -3231,6 +3933,10 @@ const saveSettings = () => {
   state.settings.autoSpeak = Boolean(document.getElementById('settings-auto-speak')?.checked);
   state.settings.haptics = Boolean(document.getElementById('settings-haptics')?.checked);
   state.settings.speechRate = Number(document.getElementById('settings-rate')?.value) || 0.86;
+  state.settings.speechVoiceURI = document.getElementById('settings-voice')?.value || '';
+  state.settings.listeningDefaultSpeed = ['slow','natural','fast'].includes(document.getElementById('settings-listening-speed')?.value)
+    ? document.getElementById('settings-listening-speed').value
+    : 'natural';
   state.settings.aiProxyUrl = document.getElementById('settings-ai-url')?.value.trim() || '';
   setTheme(document.getElementById('settings-theme')?.value || 'dark');
   save({ immediate: true });
@@ -3466,21 +4172,21 @@ const openWordDetail = (wordId) => {
   const phrases = PHRASES.filter((phrase) => phrase.words?.includes(wordId)).slice(0, 4);
   openModal(`
     <header class="modal-header">
-      <div><h2>${escapeHtml(word.pl)}</h2><p>${escapeHtml(word.type)} · frequency rank ${word.frequency} in the curated starter set</p></div>
+      <div><h2 lang="pl">${polishInteractive(word.pl)}</h2><p>${escapeHtml(word.type)} · frequency rank ${word.frequency} in the curated starter set</p></div>
       <button class="modal-close" type="button" data-action="modal-close" aria-label="Close">${icon('close')}</button>
     </header>
     <div class="modal-body">
       <div class="page-intro card" style="margin-bottom:18px">
-        <div><p class="eyebrow">POLISH IN CONTEXT</p><h2>${escapeHtml(word.pl)}</h2><p>NL ${escapeHtml(word.nl)} · EN ${escapeHtml(word.en)}</p></div>
+        <div><p class="eyebrow">POLISH IN CONTEXT</p><h2 lang="pl">${polishInteractive(word.pl)}</h2><p>NL ${escapeHtml(word.nl)} · EN ${escapeHtml(word.en)}</p></div>
         <button class="speaker-button" type="button" data-action="speak" data-text="${escapeHtml(word.pl)}">${icon('volume')}</button>
       </div>
       <div class="form-grid">
-        <div class="language-explanation"><span class="lang-tag">EXAMPLE</span><p><strong>${escapeHtml(word.example || word.pl)}</strong></p><button class="text-button" type="button" data-action="speak" data-text="${escapeHtml(word.example || word.pl)}">${icon('volume')} Listen</button></div>
+        <div class="language-explanation"><span class="lang-tag">EXAMPLE</span><p lang="pl"><strong>${polishInteractive(word.example || word.pl)}</strong></p><button class="text-button" type="button" data-action="speak" data-text="${escapeHtml(word.example || word.pl)}">${icon('volume')} Listen</button></div>
         <div class="language-explanation"><span class="lang-tag">MEMORY</span><p>${progress ? `${Math.round(progress.confidence * 100)}% confidence · ${progress.reps} reviews · ${progress.lapses} lapses` : 'New item. The coach has not tested this memory yet.'}</p></div>
       </div>
-      ${phrases.length ? `<section style="margin-top:20px"><div class="section-heading"><div><h3>Useful sentences</h3><p>The word changes shape when the sentence needs it.</p></div></div><div class="insight-list">${phrases.map((phrase) => `<div class="insight-row"><span class="insight-bullet">›</span><p>${escapeHtml(phrase.pl)}<span>${escapeHtml(primaryTranslation(phrase))}</span></p></div>`).join('')}</div></section>` : ''}
+      ${phrases.length ? `<section style="margin-top:20px"><div class="section-heading"><div><h3>Useful sentences</h3><p>Tap any Polish word to inspect its form.</p></div></div><div class="insight-list">${phrases.map((phrase) => `<div class="insight-row"><span class="insight-bullet">›</span><p lang="pl">${polishInteractive(phrase.pl)}<span>${escapeHtml(primaryTranslation(phrase))}</span></p></div>`).join('')}</div></section>` : ''}
     </div>
-    <footer class="modal-footer"><button class="secondary-button" type="button" data-action="speak" data-text="${escapeHtml(word.example || word.pl)}">${icon('volume')} Hear example</button><button class="primary-button" type="button" data-action="review-word" data-word="${word.id}">Practise this word</button></footer>
+    <footer class="modal-footer"><button class="secondary-button" type="button" data-action="open-morphology" data-word="${escapeHtml(word.pl)}" data-sentence="${escapeHtml(word.example || word.pl)}">${icon('brain')} Explain form</button><button class="secondary-button" type="button" data-action="speak" data-text="${escapeHtml(word.example || word.pl)}">${icon('volume')} Hear example</button><button class="primary-button" type="button" data-action="review-word" data-word="${word.id}">Practise this word</button></footer>
   `, { label: word.pl });
 };
 
@@ -3862,6 +4568,77 @@ const handleAction = (event) => {
     case 'speak':
       speak(target.dataset.text || '');
       break;
+    case 'open-morphology':
+      openMorphologyLens(target.dataset.word || target.textContent || '', target.dataset.sentence || target.dataset.word || target.textContent || '');
+      break;
+    case 'close-morphology':
+      closeMorphologyLens();
+      break;
+    case 'select-morphology-token':
+      if (morphologyContext) {
+        morphologyContext.selectedIndex = Number(target.dataset.index || 0);
+        renderMorphologyOverlay();
+      }
+      break;
+    case 'morphology-listen-word': {
+      const analysis = morphologyContext ? analyzePolishSentence(morphologyContext.sentence)[morphologyContext.selectedIndex || 0] : null;
+      if (analysis) speak(analysis.token, { speed: 'slow' });
+      break;
+    }
+    case 'morphology-listen-sentence':
+      if (morphologyContext?.sentence) speak(morphologyContext.sentence, { speed: 'natural' });
+      break;
+    case 'morphology-practice':
+      practiseMorphologyContext();
+      break;
+    case 'open-listening-lab':
+      openListeningLab(target.dataset.mode || 'adaptive');
+      break;
+    case 'close-listening-lab':
+      closeListeningLab();
+      break;
+    case 'listening-play':
+      playListeningItem(target.dataset.speed || 'natural');
+      break;
+    case 'listening-choice':
+      answerListeningChoice(target.dataset.option || '');
+      break;
+    case 'listening-reveal':
+      revealListeningShadow();
+      break;
+    case 'listening-shadow-rate':
+      rateListeningShadow(Number(target.dataset.rating || 0));
+      break;
+    case 'listening-next':
+      advanceListeningLab();
+      break;
+    case 'open-sound-lab':
+      openSoundLab(target.dataset.lesson || null);
+      break;
+    case 'open-sound-lesson':
+      openSoundLab(target.dataset.lesson || null);
+      break;
+    case 'close-sound-lab':
+      closeSoundLab();
+      break;
+    case 'sound-back':
+      if (activeSoundLab) {
+        activeSoundLab = { lessonId: null, quizIndex: 0, selected: null, result: null, plays: 0 };
+        renderSoundLabModal();
+      }
+      break;
+    case 'sound-example':
+      speak(target.dataset.text || '', { speed: 'slow' });
+      break;
+    case 'sound-quiz-play':
+      playSoundQuiz();
+      break;
+    case 'sound-quiz-answer':
+      answerSoundQuiz(target.dataset.option || '');
+      break;
+    case 'sound-next':
+      advanceSoundQuiz();
+      break;
     case 'open-persona':
       state.conversation.selectedPersona = target.dataset.persona;
       save();
@@ -4129,6 +4906,7 @@ const handleSubmit = (event) => {
   if (form.dataset.action === 'hint-recall-form') checkSessionHintRecall();
   if (form.dataset.action === 'tutor-hint-recall-form') submitTutorHintRecall(form);
   if (form.dataset.action === 'rapid-hint-recall-form') submitRapidHintRecall(form);
+  if (form.dataset.action === 'listening-dictation-form') submitListeningDictation(form);
   if (form.dataset.action === 'placement-typing-form') {
     const answer = new FormData(form).get('answer') || '';
     recordPlacementAnswer(String(answer));
@@ -4156,6 +4934,10 @@ const handleInput = (event) => {
   if (event.target.id === 'placement-answer' && placementSession && !placementSession.answered) {
     placementSession.typedAnswer = event.target.value;
   }
+  if (event.target.id === 'listening-answer' && activeListeningLab) {
+    const item = currentListeningItem();
+    if (item && !item.answered) item.typed = event.target.value;
+  }
 };
 
 const handleChange = (event) => {
@@ -4170,7 +4952,10 @@ const handleChange = (event) => {
 
 const handleKeydown = (event) => {
   if (event.key === 'Escape') {
-    if (session) closeSession();
+    if (morphologyContext) closeMorphologyLens();
+    else if (activeListeningLab) closeListeningLab();
+    else if (activeSoundLab) closeSoundLab();
+    else if (session) closeSession();
     else if (placementSession) {
       const incomplete = !placementSession.summary && placementSession.results.length > 0;
       if (!incomplete || window.confirm('Leave this level check? Your answers in this unfinished check will not be saved.')) closePlacementTest();
@@ -4268,6 +5053,11 @@ const initialize = async () => {
   }
   if (repairKnownTutorMisroutes()) await save({ immediate: true });
   setTheme(state.settings.theme || 'dark');
+  refreshPolishVoices();
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.addEventListener?.('voiceschanged', refreshPolishVoices);
+    setTimeout(refreshPolishVoices, 350);
+  }
   const initialHash = location.hash.replace('#', '');
   currentView = PAGE_META[initialHash] ? initialHash : (PAGE_META[state.ui.lastView] ? state.ui.lastView : 'dashboard');
   if (location.hash !== `#${currentView}`) history.replaceState(null, '', `#${currentView}`);

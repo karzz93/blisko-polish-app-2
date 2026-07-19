@@ -5,7 +5,7 @@ const STATE_KEY = 'app-state-v1';
 const SAFETY_BACKUPS_KEY = 'safety-backups-v1';
 const FALLBACK_KEY = 'blisko-app-state-v1';
 const FALLBACK_BACKUPS_KEY = 'blisko-safety-backups-v1';
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 const MAX_SAFETY_BACKUPS = 5;
 
 const SKILL_KEYS = ['reading', 'listening', 'guidedProduction', 'freeProduction', 'pronunciation'];
@@ -46,6 +46,8 @@ export const createDefaultState = () => ({
   settings: {
     theme: 'dark',
     speechRate: 0.86,
+    speechVoiceURI: '',
+    listeningDefaultSpeed: 'natural',
     showDutch: true,
     showEnglish: true,
     autoSpeak: false,
@@ -73,6 +75,7 @@ export const createDefaultState = () => ({
     topics: {},
     personas: {},
     patterns: {},
+    sounds: {},
     confusionPairs: {},
   },
   stats: {
@@ -91,6 +94,12 @@ export const createDefaultState = () => ({
     speakingAttempts: 0,
     conversationTurns: 0,
     gamesPlayed: 0,
+    listeningLab: {
+      sessions: 0, attempts: 0, correct: 0, dictations: 0, dictationCorrect: 0,
+      naturalSpeedAttempts: 0, naturalSpeedCorrect: 0, fastSpeedAttempts: 0, fastSpeedCorrect: 0,
+      replays: 0, shadowing: 0, lastAt: null,
+    },
+    soundLab: { attempts: 0, correct: 0, completedLessons: [], lastAt: null },
     hintsUsed: 0,
     hintLevelCounts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     almostKnown: 0,
@@ -201,6 +210,7 @@ const migrateState = (state) => {
   state.progress.topics = state.progress.topics || {};
   state.progress.personas = state.progress.personas || {};
   state.progress.patterns = state.progress.patterns || {};
+  state.progress.sounds = state.progress.sounds || {};
   state.progress.confusionPairs = state.progress.confusionPairs || {};
 
   Object.values(state.progress.items).forEach((progress) => {
@@ -224,6 +234,13 @@ const migrateState = (state) => {
     migrateScaffoldProgress(progress);
   });
 
+  Object.values(state.progress.sounds).forEach((progress) => {
+    progress.attempts = Number(progress.attempts || 0);
+    progress.correct = Number(progress.correct || 0);
+    progress.confidence = Math.max(0, Math.min(1, Number(progress.confidence || 0)));
+    progress.lastAt = progress.lastAt || null;
+  });
+
   state.stats = state.stats || {};
   state.stats.hintsUsed = Number(state.stats.hintsUsed || 0);
   state.stats.hintLevelCounts = {
@@ -241,6 +258,30 @@ const migrateState = (state) => {
   state.stats.activity = Array.isArray(state.stats.activity) ? state.stats.activity : [];
   state.stats.wordsSeen = Array.isArray(state.stats.wordsSeen) ? state.stats.wordsSeen : [];
   state.stats.phrasesSeen = Array.isArray(state.stats.phrasesSeen) ? state.stats.phrasesSeen : [];
+  state.stats.listeningLab = {
+    sessions: 0, attempts: 0, correct: 0, dictations: 0, dictationCorrect: 0,
+    naturalSpeedAttempts: 0, naturalSpeedCorrect: 0, fastSpeedAttempts: 0, fastSpeedCorrect: 0,
+    replays: 0, shadowing: 0, lastAt: null,
+    ...(state.stats.listeningLab || {}),
+  };
+  ['sessions','attempts','correct','dictations','dictationCorrect','naturalSpeedAttempts','naturalSpeedCorrect','fastSpeedAttempts','fastSpeedCorrect','replays','shadowing'].forEach((key) => {
+    state.stats.listeningLab[key] = Number(state.stats.listeningLab[key] || 0);
+  });
+  state.stats.soundLab = {
+    attempts: 0, correct: 0, completedLessons: [], lastAt: null,
+    ...(state.stats.soundLab || {}),
+  };
+  state.stats.soundLab.attempts = Number(state.stats.soundLab.attempts || 0);
+  state.stats.soundLab.correct = Number(state.stats.soundLab.correct || 0);
+  state.stats.soundLab.completedLessons = Array.isArray(state.stats.soundLab.completedLessons)
+    ? [...new Set(state.stats.soundLab.completedLessons)]
+    : [];
+
+  state.settings = state.settings || {};
+  state.settings.speechVoiceURI = state.settings.speechVoiceURI || '';
+  state.settings.listeningDefaultSpeed = ['slow','natural','fast'].includes(state.settings.listeningDefaultSpeed)
+    ? state.settings.listeningDefaultSpeed
+    : 'natural';
 
   const legacyEvidence = state.stats.skillEvidence || {};
   const speakingLegacy = legacyEvidence.speaking || {};

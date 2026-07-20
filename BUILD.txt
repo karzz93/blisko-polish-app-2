@@ -1,3 +1,3 @@
-Blisko 1.4.0 listening and Polish intelligence
-Adaptive listening speed, dictation, shadowing, sound contrasts, and tap-to-explain Polish forms
+Blisko 1.4.1 session rating repair
+Fixes the blocked Again, Hard, Good, Easy, and Almost Known controls after answering
 Progress data preserved

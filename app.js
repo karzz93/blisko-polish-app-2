@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.4.0';
+} from './data.js?v=1.4.1';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.4.0';
+} from './storage.js?v=1.4.1';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -65,8 +65,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.4.0';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.4.0';
+} from './engine.js?v=1.4.1';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.4.1';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -75,7 +75,7 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.4.0';
+} from './polish.js?v=1.4.1';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -3285,10 +3285,14 @@ const rateCurrentExercise = (rating, confidenceState = null) => {
     }
   }
 
+  // Compute this once for every exercise. Item reviews also use it later
+  // when scoring the completed session. Keeping it inside the pattern-only
+  // branch caused the rating buttons to throw for normal vocabulary items.
+  const evidenceWeight = getHintEvidenceWeight(session.hintLevel);
+
   // Item-specific skill evidence is recorded inside reviewItem so a reading
   // success never masks weak listening or free production for the same phrase.
   if (!exercise.itemId) {
-    const evidenceWeight = getHintEvidenceWeight(session.hintLevel);
     const almostWeight = confidenceState === 'almost' ? 0.62 : 1;
     const skillKey = getExerciseSkill(exercise);
     const skillScore = (result.correct ? Math.max(0.65, result.score || Number(rating) / 3) : result.score || 0.2) * evidenceWeight * almostWeight;

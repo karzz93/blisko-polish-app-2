@@ -5,7 +5,7 @@ const STATE_KEY = 'app-state-v1';
 const SAFETY_BACKUPS_KEY = 'safety-backups-v1';
 const FALLBACK_KEY = 'blisko-app-state-v1';
 const FALLBACK_BACKUPS_KEY = 'blisko-safety-backups-v1';
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 const MAX_SAFETY_BACKUPS = 5;
 
 const SKILL_KEYS = ['reading', 'listening', 'guidedProduction', 'freeProduction', 'pronunciation'];
@@ -40,6 +40,29 @@ export const createDefaultState = () => ({
       motherInLaw: 'Mother-in-law',
       fatherInLaw: 'Father-in-law',
       grandmother: 'Grandmother',
+    },
+    familyProfiles: {
+      'mother-in-law': {
+        name: 'Mother-in-law',
+        relation: 'mother-in-law',
+        topics: 'food, travel, family news',
+        commonQuestion: 'Jak minęła podróż?',
+        upcomingOccasion: 'next family visit',
+      },
+      'father-in-law': {
+        name: 'Father-in-law',
+        relation: 'father-in-law',
+        topics: 'work, motorsport, hobbies',
+        commonQuestion: 'Co słychać w pracy?',
+        upcomingOccasion: 'coffee or dinner together',
+      },
+      grandmother: {
+        name: 'Grandmother',
+        relation: 'grandmother',
+        topics: 'food, health, holidays',
+        commonQuestion: 'Smakuje ci?',
+        upcomingOccasion: 'family dinner or Christmas',
+      },
     },
     interests: ['motorsport', 'snowboarding', 'festivals', 'bonsai'],
   },
@@ -212,6 +235,30 @@ const migrateState = (state) => {
   state.progress.patterns = state.progress.patterns || {};
   state.progress.sounds = state.progress.sounds || {};
   state.progress.confusionPairs = state.progress.confusionPairs || {};
+
+  state.profile = state.profile || {};
+  state.profile.familyNames = state.profile.familyNames || {};
+  state.profile.familyProfiles = state.profile.familyProfiles || {};
+  const familyProfileDefaults = createDefaultState().profile.familyProfiles;
+  Object.entries(familyProfileDefaults).forEach(([personaId, defaults]) => {
+    const legacyName = personaId === 'mother-in-law'
+      ? state.profile.familyNames.motherInLaw
+      : personaId === 'father-in-law'
+        ? state.profile.familyNames.fatherInLaw
+        : state.profile.familyNames.grandmother;
+    const existingProfile = state.profile.familyProfiles[personaId] || {};
+    const existingNameIsCustom = existingProfile.name && existingProfile.name !== defaults.name;
+    const migratedName = existingNameIsCustom
+      ? existingProfile.name
+      : previousSchema < 6 && legacyName
+        ? legacyName
+        : existingProfile.name || legacyName || defaults.name;
+    state.profile.familyProfiles[personaId] = {
+      ...defaults,
+      ...existingProfile,
+      name: migratedName,
+    };
+  });
 
   Object.values(state.progress.items).forEach((progress) => {
     progress.history = Array.isArray(progress.history) ? progress.history : [];

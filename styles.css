@@ -6129,3 +6129,170 @@ body.session-keyboard-open .session-footer-inner.pre-answer .ghost-button {
   .mobile-settings-button,
   #theme-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
 }
+
+
+/* Blisko 1.5: family profiles and branching-conversation support */
+.family-profile-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.family-profile-link:hover {
+  color: var(--text);
+  background: var(--panel-strong);
+}
+
+.family-profile-link svg {
+  width: 13px;
+  height: 13px;
+}
+
+.family-context-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--line);
+  background: var(--line);
+}
+
+.family-context-strip > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 9px 12px;
+  background: color-mix(in srgb, var(--panel-muted) 55%, var(--panel-strong));
+  color: var(--muted);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.family-context-strip b {
+  color: var(--muted-2);
+  font-size: 7px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.conversation-intentions {
+  padding: 9px 14px 0;
+}
+
+.intentions-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted-2);
+  font-size: 8px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.intention-chip-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 3px;
+  scrollbar-width: thin;
+}
+
+.intention-chip {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--muted);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.intention-chip:hover,
+.intention-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  color: var(--text);
+  background: var(--green-soft);
+}
+
+.family-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.family-settings-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-muted);
+}
+
+.family-settings-card header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 11px;
+}
+
+.family-settings-card header > span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--green-soft);
+  font-size: 17px;
+}
+
+.family-settings-card header div {
+  min-width: 0;
+  display: grid;
+}
+
+.family-settings-card header strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.family-settings-card header small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.family-settings-card .form-field + .form-field {
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .family-settings-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .family-context-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .family-context-strip > span {
+    grid-template-columns: 95px minmax(0, 1fr);
+    align-items: baseline;
+  }
+
+  .conversation-intentions {
+    padding-inline: 10px;
+  }
+}

@@ -1,3 +1,8 @@
-Blisko 1.4.1 session rating repair
-Fixes the blocked Again, Hard, Good, Easy, and Almost Known controls after answering
-Progress data preserved
+Blisko 1.5 family conversation upgrade
+Includes the 1.4.2 smooth-interaction fix: lesson answers and word tiles no longer rebuild the full-screen lesson modal
+Adds editable real-family profiles for mother-in-law, father-in-law, and grandmother
+Adds topics, common questions, relationship labels, and the next likely occasion to each family profile
+Expands the three core family conversations to six or seven turns
+Adds answer-dependent family reactions and stores the chosen branch route
+Adds intention chips that provide only a short Polish sentence starter rather than revealing the full answer
+Preserves existing learning progress and migrates older backups to schema version 6

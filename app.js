@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.4.1';
+} from './data.js?v=1.5';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.4.1';
+} from './storage.js?v=1.5';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -65,8 +65,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.4.1';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.4.1';
+} from './engine.js?v=1.5';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.5';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -75,7 +75,7 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.4.1';
+} from './polish.js?v=1.5';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -1475,35 +1475,87 @@ function renderReview() {
   `;
 }
 
-const personaDisplayName = (persona) => {
-  if (persona.id === 'mother-in-law') return state.profile.familyNames.motherInLaw || persona.name;
-  if (persona.id === 'father-in-law') return state.profile.familyNames.fatherInLaw || persona.name;
-  if (persona.id === 'grandmother') return state.profile.familyNames.grandmother || persona.name;
-  return persona.name;
+const FAMILY_PERSONA_IDS = new Set(['mother-in-law', 'father-in-law', 'grandmother']);
+
+const familyProfileFor = (personaOrId) => {
+  const personaId = typeof personaOrId === 'string' ? personaOrId : personaOrId?.id;
+  const persona = PERSONAS.find((entry) => entry.id === personaId);
+  const legacyName = personaId === 'mother-in-law'
+    ? state.profile.familyNames?.motherInLaw
+    : personaId === 'father-in-law'
+      ? state.profile.familyNames?.fatherInLaw
+      : personaId === 'grandmother'
+        ? state.profile.familyNames?.grandmother
+        : '';
+  const saved = state.profile.familyProfiles?.[personaId] || {};
+  return {
+    name: saved.name || legacyName || persona?.name || 'Family member',
+    relation: saved.relation || persona?.name || 'family member',
+    topics: saved.topics || '',
+    commonQuestion: saved.commonQuestion || '',
+    upcomingOccasion: saved.upcomingOccasion || '',
+  };
+};
+
+const personaDisplayName = (persona) => FAMILY_PERSONA_IDS.has(persona.id)
+  ? familyProfileFor(persona).name
+  : persona.name;
+
+const personalizeConversationText = (text = '') => String(text || '')
+  .replaceAll('{learner}', state.profile.name || 'Kars')
+  .replace(/\bKars\b/g, state.profile.name || 'Kars');
+
+const personalizedConversationMessage = (source = {}, extra = {}) => ({
+  sender: 'role',
+  text: personalizeConversationText(source.role || source.text || ''),
+  nl: source.nl || '',
+  en: source.en || '',
+  ...extra,
+});
+
+const conversationIntentLabel = (suggestion = {}) => state.settings.showDutch
+  ? (suggestion.labelNl || suggestion.labelEn || suggestion.pl)
+  : (suggestion.labelEn || suggestion.labelNl || suggestion.pl);
+
+const renderConversationIntents = (turn, transcript) => {
+  if (!turn || transcript.completed || state.conversation.level === 'stretch') return '';
+  const suggestions = turn.suggestions || [];
+  if (!suggestions.length) return '';
+  return `
+    <div class="conversation-intentions" aria-label="Reply intentions">
+      <span class="intentions-label">${state.conversation.level === 'guided' ? 'Choose what you want to say' : 'Possible intentions'}</span>
+      <div class="intention-chip-row">
+        ${suggestions.map((suggestion) => `<button class="intention-chip" type="button" data-action="conversation-intent" data-starter="${escapeHtml(suggestion.starter || '')}" title="Add a short Polish starter without revealing the full answer">${escapeHtml(conversationIntentLabel(suggestion))}</button>`).join('')}
+      </div>
+    </div>
+  `;
 };
 
 const ensureConversationState = (personaId) => {
   const conversation = CONVERSATIONS[personaId];
   if (!conversation) return null;
+  const existingTranscript = state.conversation.transcripts[personaId];
+  if (existingTranscript && FAMILY_PERSONA_IDS.has(personaId) && existingTranscript.scriptVersion !== APP_VERSION) {
+    delete state.conversation.transcripts[personaId];
+  }
   if (!state.conversation.transcripts[personaId]) {
     const firstTurn = conversation.turns[0];
     state.conversation.transcripts[personaId] = {
+      scriptVersion: APP_VERSION,
       turnIndex: 0,
       completed: false,
       hintsByTurn: {},
-      messages: [{
-        sender: 'role',
-        text: firstTurn.role,
-        nl: firstTurn.nl,
-        en: firstTurn.en,
+      branchHistory: [],
+      messages: [personalizedConversationMessage(firstTurn, {
         turnIndex: 0,
         at: new Date().toISOString(),
-      }],
+      })],
     };
   }
   const transcript = state.conversation.transcripts[personaId];
   if (!transcript.hintsByTurn || typeof transcript.hintsByTurn !== 'object') transcript.hintsByTurn = {};
   if (!Array.isArray(transcript.messages)) transcript.messages = [];
+  if (!Array.isArray(transcript.branchHistory)) transcript.branchHistory = [];
   return transcript;
 };
 
@@ -1599,6 +1651,8 @@ function renderTalk() {
   const transcript = ensureConversationState(persona.id);
   const currentTurn = conversation.turns[Math.min(transcript.turnIndex, conversation.turns.length - 1)];
   const readiness = getPersonaReadiness(state, persona);
+  const familyProfile = FAMILY_PERSONA_IDS.has(persona.id) ? familyProfileFor(persona) : null;
+  const turnNumber = Math.min(transcript.turnIndex + 1, conversation.turns.length);
 
   return `
     <div class="view">
@@ -1607,6 +1661,7 @@ function renderTalk() {
           <div class="talk-sidebar-head">
             <h2>Conversation simulator</h2>
             <p>Choose who you need to understand in real life.</p>
+            <button class="family-profile-link" type="button" data-action="open-family-settings">${icon('settings')} Edit family profiles</button>
           </div>
           <div class="persona-list">
             ${PERSONAS.map((entry) => {
@@ -1626,7 +1681,7 @@ function renderTalk() {
           <header class="talk-head">
             <div class="talk-person">
               <span class="persona-avatar">${persona.emoji}</span>
-              <span class="talk-person-copy"><strong>${escapeHtml(personaDisplayName(persona))} · ${escapeHtml(persona.polishRole)}</strong><span>${escapeHtml(persona.scenario)} · ${Math.round(readiness * 100)}% ready</span></span>
+              <span class="talk-person-copy"><strong>${escapeHtml(personaDisplayName(persona))} · ${escapeHtml(familyProfile?.relation || persona.polishRole)}</strong><span>${escapeHtml(persona.polishRole)} · ${escapeHtml(persona.scenario)} · turn ${turnNumber}/${conversation.turns.length} · ${Math.round(readiness * 100)}% ready</span></span>
             </div>
             <div class="talk-controls">
               <div class="difficulty-toggle" aria-label="Conversation support level">
@@ -1636,8 +1691,15 @@ function renderTalk() {
             </div>
           </header>
 
+          ${familyProfile ? `
+            <div class="family-context-strip">
+              <span><b>Topics</b>${escapeHtml(familyProfile.topics || 'everyday family talk')}</span>
+              <span><b>Likely question</b><span lang="pl">${escapeHtml(familyProfile.commonQuestion || 'Co u was słychać?')}</span></span>
+              <span><b>Next occasion</b>${escapeHtml(familyProfile.upcomingOccasion || 'next family visit')}</span>
+            </div>
+          ` : ''}
           <div class="chat-area" id="conversation-chat">
-            <div class="scenario-banner">${escapeHtml(conversation.scenarioTitle)} The coach adapts support to “${escapeHtml(state.conversation.level)}” mode.</div>
+            <div class="scenario-banner">${escapeHtml(conversation.scenarioTitle)} The coach adapts support to “${escapeHtml(state.conversation.level)}” mode and reacts to the intention in your answer.</div>
             ${transcript.messages.map((message) => renderConversationMessage(message, persona)).join('')}
             ${transcript.completed ? `
               <div class="session-summary" style="align-self:center;margin:10px auto">
@@ -1650,6 +1712,7 @@ function renderTalk() {
           </div>
 
           <div>
+            ${renderConversationIntents(currentTurn, transcript)}
             ${renderConversationHintPanel(persona, transcript, currentTurn)}
             <div class="talk-composer">
               ${(() => {
@@ -2613,6 +2676,26 @@ const renderPlacementSummary = () => {
   `;
 };
 
+const renderPlacementOrderingInteraction = (question) => {
+  const selectedIds = new Set(placementSession.orderSelected.map((token) => token.id));
+  return `
+    <div class="order-zone placement-order-zone">${placementSession.orderSelected.map((token) => `<button class="word-chip" type="button" data-action="placement-order-remove" data-token="${escapeHtml(token.id)}" ${placementSession.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('') || '<span class="hint-empty-copy">Tap the words in sentence order.</span>'}</div>
+    <div class="order-bank">${question.tokens.filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="placement-order-add" data-token="${escapeHtml(token.id)}" ${placementSession.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('')}</div>
+    <button class="primary-button placement-order-check" type="button" data-action="placement-order-check" ${placementSession.answered || !placementSession.orderSelected.length ? 'disabled' : ''}>Check sentence</button>
+  `;
+};
+
+const refreshPlacementOrderingInteraction = () => {
+  const question = currentPlacementQuestion();
+  if (!placementSession || placementSession.answered || question?.type !== 'ordering') return;
+  const root = modalRoot.querySelector('[data-placement-ordering]');
+  if (!root) {
+    renderPlacementTest();
+    return;
+  }
+  root.innerHTML = renderPlacementOrderingInteraction(question);
+};
+
 const renderPlacementQuestion = (question) => {
   const result = placementSession.answerResult;
   let interaction = '';
@@ -2634,11 +2717,7 @@ const renderPlacementQuestion = (question) => {
         <button class="primary-button" type="submit" ${placementSession.answered ? 'disabled' : ''}>Check</button>
       </form>`;
   } else if (question.type === 'ordering') {
-    const selectedIds = new Set(placementSession.orderSelected.map((token) => token.id));
-    interaction = `
-      <div class="order-zone placement-order-zone">${placementSession.orderSelected.map((token) => `<button class="word-chip" type="button" data-action="placement-order-remove" data-token="${escapeHtml(token.id)}" ${placementSession.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('') || '<span class="hint-empty-copy">Tap the words in sentence order.</span>'}</div>
-      <div class="order-bank">${question.tokens.filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="placement-order-add" data-token="${escapeHtml(token.id)}" ${placementSession.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('')}</div>
-      <button class="primary-button placement-order-check" type="button" data-action="placement-order-check" ${placementSession.answered || !placementSession.orderSelected.length ? 'disabled' : ''}>Check sentence</button>`;
+    interaction = `<div class="ordering-interaction" data-placement-ordering>${renderPlacementOrderingInteraction(question)}</div>`;
   } else {
     interaction = `
       <div class="placement-speaking-panel">
@@ -2714,6 +2793,29 @@ const renderHintMeter = (level = 0) => `
   </div>
 `;
 
+const renderHintOrderingInteraction = () => {
+  const selectedIds = new Set(session.hintRecallOrderSelected.map((token) => token.id));
+  return `
+    <div class="order-zone hint-recall-zone" aria-label="Your recalled sentence">
+      ${session.hintRecallOrderSelected.map((token) => `<button class="word-chip" type="button" data-action="hint-order-remove" data-token="${escapeHtml(token.id)}">${escapeHtml(token.value)}</button>`).join('') || '<span class="hint-empty-copy">Rebuild the sentence without looking back.</span>'}
+    </div>
+    <div class="order-bank">
+      ${(session.hintRecallTokens || []).filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="hint-order-add" data-token="${escapeHtml(token.id)}">${escapeHtml(token.value)}</button>`).join('')}
+    </div>
+    <div class="button-row hint-recall-actions"><button class="ghost-button" type="button" data-action="show-hint-answer-again">Show once more</button><button class="primary-button" type="button" data-action="check-hint-order" ${session.hintRecallOrderSelected.length ? '' : 'disabled'}>Check recall</button></div>
+  `;
+};
+
+const refreshHintOrderingInteraction = () => {
+  if (!session || session.answered || session.hintRecallPhase !== 'recall') return;
+  const root = modalRoot.querySelector('[data-session-hint-ordering]');
+  if (!root) {
+    renderSession();
+    return;
+  }
+  root.innerHTML = renderHintOrderingInteraction();
+};
+
 const renderSessionHintRecall = (exercise) => {
   if (session.hintLevel < 5 || session.answered) return '';
   if (session.hintRecallPhase === 'study') {
@@ -2741,16 +2843,7 @@ const renderSessionHintRecall = (exercise) => {
       </div>
     `;
   } else if (exercise.type === 'ordering') {
-    const selectedIds = new Set(session.hintRecallOrderSelected.map((token) => token.id));
-    interaction = `
-      <div class="order-zone hint-recall-zone" aria-label="Your recalled sentence">
-        ${session.hintRecallOrderSelected.map((token) => `<button class="word-chip" type="button" data-action="hint-order-remove" data-token="${escapeHtml(token.id)}">${escapeHtml(token.value)}</button>`).join('') || '<span class="hint-empty-copy">Rebuild the sentence without looking back.</span>'}
-      </div>
-      <div class="order-bank">
-        ${(session.hintRecallTokens || []).filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="hint-order-add" data-token="${escapeHtml(token.id)}">${escapeHtml(token.value)}</button>`).join('')}
-      </div>
-      <div class="button-row hint-recall-actions"><button class="ghost-button" type="button" data-action="show-hint-answer-again">Show once more</button><button class="primary-button" type="button" data-action="check-hint-order" ${session.hintRecallOrderSelected.length ? '' : 'disabled'}>Check recall</button></div>
-    `;
+    interaction = `<div class="ordering-interaction" data-session-hint-ordering>${renderHintOrderingInteraction()}</div>`;
   } else {
     interaction = `
       <form class="answer-input-wrap hint-recall-form" data-action="hint-recall-form">
@@ -2808,26 +2901,45 @@ const renderSession = () => {
   const focusTarget = session.autofocusTarget;
   session.autofocusTarget = null;
 
-  modalRoot.innerHTML = `
-    <div class="session-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(session.title)}">
-      <header class="session-topbar">
-        <button class="icon-button" type="button" data-action="close-session" aria-label="Close session">${icon('close')}</button>
-        <div class="session-progress-wrap">
-          <div class="progress-track"><span style="width:${complete ? 100 : Math.round(session.index / session.exercises.length * 100)}%"></span></div>
-          <span>${Math.min(session.index + 1, session.exercises.length)} / ${session.exercises.length}</span>
-        </div>
-        <span class="session-score">${icon('target')} ${session.score}</span>
-      </header>
-      <main class="session-stage">
-        ${complete ? renderSessionSummary() : renderExercise(currentExercise())}
-      </main>
-      <footer class="session-footer">
-        ${complete ? renderCompleteSessionFooter() : renderSessionFooter()}
-      </footer>
+  const topbarMarkup = `
+    <button class="icon-button" type="button" data-action="close-session" aria-label="Close session">${icon('close')}</button>
+    <div class="session-progress-wrap">
+      <div class="progress-track"><span style="width:${complete ? 100 : Math.round(session.index / session.exercises.length * 100)}%"></span></div>
+      <span>${Math.min(session.index + 1, session.exercises.length)} / ${session.exercises.length}</span>
     </div>
+    <span class="session-score">${icon('target')} ${session.score}</span>
   `;
-  hydrateStaticIcons(modalRoot);
-  requestAnimationFrame(() => syncVisualViewport());
+  const stageMarkup = complete ? renderSessionSummary() : renderExercise(currentExercise());
+  const footerMarkup = complete ? renderCompleteSessionFooter() : renderSessionFooter();
+
+  let modal = modalRoot.querySelector('.session-modal');
+  const previousIndex = Number(modal?.dataset.exerciseIndex ?? -1);
+  const sameExercise = previousIndex === session.index;
+  const previousScrollTop = sameExercise ? (modal?.querySelector('.session-stage')?.scrollTop || 0) : 0;
+
+  if (!modal) {
+    modalRoot.innerHTML = `
+      <div class="session-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(session.title)}" data-exercise-index="${session.index}">
+        <header class="session-topbar">${topbarMarkup}</header>
+        <main class="session-stage">${stageMarkup}</main>
+        <footer class="session-footer">${footerMarkup}</footer>
+      </div>
+    `;
+    modal = modalRoot.querySelector('.session-modal');
+  } else {
+    modal.setAttribute('aria-label', session.title);
+    modal.dataset.exerciseIndex = String(session.index);
+    modal.querySelector('.session-topbar').innerHTML = topbarMarkup;
+    modal.querySelector('.session-stage').innerHTML = stageMarkup;
+    modal.querySelector('.session-footer').innerHTML = footerMarkup;
+  }
+
+  hydrateStaticIcons(modal);
+  requestAnimationFrame(() => {
+    const stage = modal?.querySelector('.session-stage');
+    if (stage) stage.scrollTop = sameExercise ? previousScrollTop : 0;
+    syncVisualViewport();
+  });
 
   if (!complete && focusTarget === 'recall' && session.hintRecallPhase === 'recall' && !session.answered) {
     setTimeout(() => {
@@ -2840,6 +2952,29 @@ const renderSession = () => {
       syncVisualViewport();
     }, 50);
   }
+};
+
+const renderSessionOrderingInteraction = (exercise) => {
+  const selectedIds = new Set(session.orderSelected.map((token) => token.id));
+  return `
+    <div class="order-zone" aria-label="Your sentence">
+      ${session.orderSelected.map((token) => `<button class="word-chip" type="button" data-action="order-remove" data-token="${escapeHtml(token.id)}" ${session.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('') || '<span style="color:var(--muted);font-size:10px;padding:8px">Tap words below to build the sentence.</span>'}
+    </div>
+    <div class="order-bank">
+      ${exercise.tokens.filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="order-add" data-token="${escapeHtml(token.id)}" ${session.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('')}
+    </div>
+    <div class="button-row" style="margin-top:12px;justify-content:flex-end"><button class="primary-button" type="button" data-action="check-order" ${session.answered || !session.orderSelected.length ? 'disabled' : ''}>Check sentence</button></div>
+  `;
+};
+
+const refreshSessionOrderingInteraction = () => {
+  if (!session || session.answered || currentExercise()?.type !== 'ordering') return;
+  const root = modalRoot.querySelector('[data-session-ordering]');
+  if (!root) {
+    renderSession();
+    return;
+  }
+  root.innerHTML = renderSessionOrderingInteraction(currentExercise());
 };
 
 const renderExercise = (exercise) => {
@@ -2886,16 +3021,7 @@ const renderExercise = (exercise) => {
       </form>
     `;
   } else if (exercise.type === 'ordering') {
-    const selectedIds = new Set(session.orderSelected.map((token) => token.id));
-    interaction = `
-      <div class="order-zone" aria-label="Your sentence">
-        ${session.orderSelected.map((token) => `<button class="word-chip" type="button" data-action="order-remove" data-token="${escapeHtml(token.id)}" ${session.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('') || '<span style="color:var(--muted);font-size:10px;padding:8px">Tap words below to build the sentence.</span>'}
-      </div>
-      <div class="order-bank">
-        ${exercise.tokens.filter((token) => !selectedIds.has(token.id)).map((token) => `<button class="word-chip" type="button" data-action="order-add" data-token="${escapeHtml(token.id)}" ${session.answered ? 'disabled' : ''}>${escapeHtml(token.value)}</button>`).join('')}
-      </div>
-      <div class="button-row" style="margin-top:12px;justify-content:flex-end"><button class="primary-button" type="button" data-action="check-order" ${session.answered || !session.orderSelected.length ? 'disabled' : ''}>Check sentence</button></div>
-    `;
+    interaction = `<div class="ordering-interaction" data-session-ordering>${renderSessionOrderingInteraction(exercise)}</div>`;
   } else if (exercise.type === 'speaking') {
     interaction = `
       <div class="speaking-panel">
@@ -3865,10 +3991,32 @@ const openSettings = () => {
         <div class="form-grid">
           <div class="form-field"><label for="settings-name">Your name</label><input id="settings-name" value="${escapeHtml(state.profile.name)}"></div>
           <div class="form-field"><label for="settings-gender">Forms used when you speak</label><select id="settings-gender"><option value="male" ${state.profile.speakerGender === 'male' ? 'selected' : ''}>Masculine (chciałbym, byłem)</option><option value="female" ${state.profile.speakerGender === 'female' ? 'selected' : ''}>Feminine (chciałabym, byłam)</option></select></div>
-          <div class="form-field"><label for="settings-mother">Mother-in-law label or name</label><input id="settings-mother" value="${escapeHtml(state.profile.familyNames.motherInLaw)}"></div>
-          <div class="form-field"><label for="settings-father">Father-in-law label or name</label><input id="settings-father" value="${escapeHtml(state.profile.familyNames.fatherInLaw)}"></div>
-          <div class="form-field"><label for="settings-grandmother">Grandmother label or name</label><input id="settings-grandmother" value="${escapeHtml(state.profile.familyNames.grandmother)}"></div>
           <div class="form-field"><label for="settings-goal">Daily focused minutes</label><input id="settings-goal" type="number" min="5" max="90" value="${state.profile.dailyGoal}"></div>
+        </div>
+      </section>
+
+      <section class="settings-section" id="family-profile-settings">
+        <h3>Your real family profiles</h3>
+        <p>Use actual names and likely topics. Blisko shows this context during simulations so practice feels like the next real visit.</p>
+        <div class="family-settings-grid">
+          ${[
+            ['mother-in-law', 'Mother-in-law', '👩'],
+            ['father-in-law', 'Father-in-law', '👨'],
+            ['grandmother', 'Grandmother', '👵'],
+          ].map(([personaId, fallbackLabel, emoji]) => {
+            const profile = familyProfileFor(personaId);
+            const fieldKey = personaId.replaceAll('-', '_');
+            return `
+              <article class="family-settings-card">
+                <header><span>${emoji}</span><div><strong>${escapeHtml(profile.name || fallbackLabel)}</strong><small>${escapeHtml(fallbackLabel)}</small></div></header>
+                <div class="form-field"><label for="family-${fieldKey}-name">Name or preferred label</label><input id="family-${fieldKey}-name" value="${escapeHtml(profile.name)}"></div>
+                <div class="form-field"><label for="family-${fieldKey}-relation">Relationship</label><input id="family-${fieldKey}-relation" value="${escapeHtml(profile.relation)}"></div>
+                <div class="form-field"><label for="family-${fieldKey}-topics">Topics you usually discuss</label><input id="family-${fieldKey}-topics" value="${escapeHtml(profile.topics)}" placeholder="food, work, holidays"></div>
+                <div class="form-field"><label for="family-${fieldKey}-question">A question they often ask</label><input id="family-${fieldKey}-question" value="${escapeHtml(profile.commonQuestion)}" placeholder="Jak minęła podróż?"></div>
+                <div class="form-field"><label for="family-${fieldKey}-occasion">Next likely occasion</label><input id="family-${fieldKey}-occasion" value="${escapeHtml(profile.upcomingOccasion)}" placeholder="Christmas dinner, summer visit…"></div>
+              </article>
+            `;
+          }).join('')}
         </div>
       </section>
 
@@ -3928,9 +4076,25 @@ const saveSettings = () => {
 
   state.profile.name = name;
   state.profile.speakerGender = document.getElementById('settings-gender')?.value || 'male';
-  state.profile.familyNames.motherInLaw = document.getElementById('settings-mother')?.value.trim() || 'Mother-in-law';
-  state.profile.familyNames.fatherInLaw = document.getElementById('settings-father')?.value.trim() || 'Father-in-law';
-  state.profile.familyNames.grandmother = document.getElementById('settings-grandmother')?.value.trim() || 'Grandmother';
+  state.profile.familyProfiles = state.profile.familyProfiles || {};
+  const familyFields = [
+    ['mother-in-law', 'mother_in_law', 'Mother-in-law'],
+    ['father-in-law', 'father_in_law', 'Father-in-law'],
+    ['grandmother', 'grandmother', 'Grandmother'],
+  ];
+  familyFields.forEach(([personaId, fieldKey, fallbackName]) => {
+    const previous = familyProfileFor(personaId);
+    state.profile.familyProfiles[personaId] = {
+      name: document.getElementById(`family-${fieldKey}-name`)?.value.trim() || fallbackName,
+      relation: document.getElementById(`family-${fieldKey}-relation`)?.value.trim() || previous.relation,
+      topics: document.getElementById(`family-${fieldKey}-topics`)?.value.trim() || previous.topics,
+      commonQuestion: document.getElementById(`family-${fieldKey}-question`)?.value.trim() || previous.commonQuestion,
+      upcomingOccasion: document.getElementById(`family-${fieldKey}-occasion`)?.value.trim() || previous.upcomingOccasion,
+    };
+  });
+  state.profile.familyNames.motherInLaw = state.profile.familyProfiles['mother-in-law'].name;
+  state.profile.familyNames.fatherInLaw = state.profile.familyProfiles['father-in-law'].name;
+  state.profile.familyNames.grandmother = state.profile.familyProfiles.grandmother.name;
   state.profile.dailyGoal = dailyGoal;
   state.settings.showDutch = showDutch || !showEnglish;
   state.settings.showEnglish = showEnglish || !showDutch;
@@ -4302,22 +4466,32 @@ const sendConversationReply = (providedText = null) => {
 
   let nextText = null;
   if (evaluation.accepted || state.conversation.level === 'guided') {
+    if (evaluation.accepted && evaluation.matchedSuggestionId) {
+      transcript.branchHistory.push({
+        turnIndex,
+        suggestionId: evaluation.matchedSuggestionId,
+        at: new Date().toISOString(),
+      });
+    }
+    if (evaluation.accepted && evaluation.followUp?.role) {
+      transcript.messages.push(personalizedConversationMessage(evaluation.followUp, {
+        reaction: true,
+        turnIndex,
+        at: new Date().toISOString(),
+      }));
+    }
     transcript.turnIndex += 1;
     if (transcript.turnIndex >= conversation.turns.length) {
       transcript.completed = true;
-      transcript.messages.push({ sender: 'system', text: 'Scenario complete · feedback and hint dependence have been added to your learner model.' });
+      transcript.messages.push({ sender: 'system', text: 'Scenario complete · your choices created a personal route through the conversation, and the evidence was added to your learner model.' });
       addActivity(state, { minutes: 2 });
     } else {
       const nextTurn = conversation.turns[transcript.turnIndex];
-      transcript.messages.push({
-        sender: 'role',
-        text: nextTurn.role,
-        nl: nextTurn.nl,
-        en: nextTurn.en,
+      transcript.messages.push(personalizedConversationMessage(nextTurn, {
         turnIndex: transcript.turnIndex,
         at: new Date().toISOString(),
-      });
-      nextText = nextTurn.role;
+      }));
+      nextText = personalizeConversationText(nextTurn.role);
     }
   }
 
@@ -4338,7 +4512,7 @@ const resetConversation = (personaId = state.conversation.selectedPersona) => {
   ensureConversationState(personaId);
   save();
   renderTalkIntoView();
-  const firstLine = CONVERSATIONS[personaId]?.turns?.[0]?.role;
+  const firstLine = personalizeConversationText(CONVERSATIONS[personaId]?.turns?.[0]?.role || '');
   if (firstLine && state.settings.autoSpeak) setTimeout(() => speak(firstLine), 150);
 };
 
@@ -4648,12 +4822,27 @@ const handleAction = (event) => {
       save();
       navigate('talk');
       break;
+    case 'open-family-settings':
+      openSettings();
+      setTimeout(() => document.getElementById('family-profile-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+      break;
+    case 'conversation-intent': {
+      const input = document.getElementById('conversation-input');
+      if (input && !input.disabled) {
+        const starter = target.dataset.starter || '';
+        input.value = starter;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+      break;
+    }
     case 'select-persona':
       state.conversation.selectedPersona = target.dataset.persona;
       ensureConversationState(target.dataset.persona);
       save();
       renderTalkIntoView();
-      if (state.settings.autoSpeak) speak(CONVERSATIONS[target.dataset.persona]?.turns?.[0]?.role || '');
+      if (state.settings.autoSpeak) speak(personalizeConversationText(CONVERSATIONS[target.dataset.persona]?.turns?.[0]?.role || ''));
       break;
     case 'set-talk-level':
       state.conversation.level = target.dataset.level;
@@ -4713,14 +4902,16 @@ const handleAction = (event) => {
       const token = question?.tokens?.find((entry) => entry.id === target.dataset.token);
       if (token && placementSession && !placementSession.answered && !placementSession.orderSelected.some((entry) => entry.id === token.id)) {
         placementSession.orderSelected.push(token);
-        renderPlacementTest();
+        haptic(4);
+        refreshPlacementOrderingInteraction();
       }
       break;
     }
     case 'placement-order-remove':
       if (placementSession && !placementSession.answered) {
         placementSession.orderSelected = placementSession.orderSelected.filter((entry) => entry.id !== target.dataset.token);
-        renderPlacementTest();
+        haptic(4);
+        refreshPlacementOrderingInteraction();
       }
       break;
     case 'placement-order-check':
@@ -4821,13 +5012,15 @@ const handleAction = (event) => {
       const token = exercise?.tokens.find((entry) => entry.id === target.dataset.token);
       if (token && !session.orderSelected.some((entry) => entry.id === token.id)) {
         session.orderSelected.push(token);
-        renderSession();
+        haptic(4);
+        refreshSessionOrderingInteraction();
       }
       break;
     }
     case 'order-remove':
       session.orderSelected = session.orderSelected.filter((entry) => entry.id !== target.dataset.token);
-      renderSession();
+      haptic(4);
+      refreshSessionOrderingInteraction();
       break;
     case 'check-order':
       checkOrderedAnswer();
@@ -4845,13 +5038,15 @@ const handleAction = (event) => {
       const token = session?.hintRecallTokens?.find((entry) => entry.id === target.dataset.token);
       if (token && !session.hintRecallOrderSelected.some((entry) => entry.id === token.id)) {
         session.hintRecallOrderSelected.push(token);
-        renderSession();
+        haptic(4);
+        refreshHintOrderingInteraction();
       }
       break;
     }
     case 'hint-order-remove':
       session.hintRecallOrderSelected = session.hintRecallOrderSelected.filter((entry) => entry.id !== target.dataset.token);
-      renderSession();
+      haptic(4);
+      refreshHintOrderingInteraction();
       break;
     case 'check-hint-order':
       checkSessionHintOrder();

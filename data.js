@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.4.1';
+export const APP_VERSION = '1.5';
 
 
 
@@ -713,27 +713,27 @@ export const PERSONAS = [
 
 export const CONVERSATIONS = {
   'mother-in-law': {
-    scenarioTitle: 'You have just arrived at the family home in Poland.',
+    scenarioTitle: 'A complete arrival and family-dinner conversation at the family home.',
     turns: [
       {
-        role: 'Cześć, Kars! Jak minęła podróż?',
-        nl: 'Hoi Kars! Hoe was de reis?',
-        en: 'Hi Kars! How was the journey?',
+        role: 'Cześć, {learner}! Jak minęła podróż?',
+        nl: 'Hoi! Hoe was de reis?',
+        en: 'Hi! How was the journey?',
         suggestions: [
-          { pl: 'Dobrze, dziękuję. Podróż była spokojna.', intent: ['dobrze','dziękuję','podróż','spokojna'] },
-          { pl: 'Trochę długo, ale wszystko dobrze.', intent: ['długo','dobrze'] },
-          { pl: 'Byłem zmęczony, ale cieszę się, że tu jestem.', intent: ['zmęczony','cieszę','jestem'] },
+          { id: 'journey-calm', labelNl: 'De reis ging goed', labelEn: 'The journey went well', starter: 'Dobrze, dziękuję.', pl: 'Dobrze, dziękuję. Podróż była spokojna.', intent: ['dobrze','dziękuję','podróż','spokojna'], followUp: { role: 'To świetnie. Cieszę się, że jesteście już tutaj.', nl: 'Wat fijn. Ik ben blij dat jullie er zijn.', en: "That's great. I'm happy you're here." } },
+          { id: 'journey-long', labelNl: 'Het duurde lang', labelEn: 'It was a long trip', starter: 'Trochę długo, ale…', pl: 'Trochę długo, ale wszystko dobrze.', intent: ['długo','dobrze'], followUp: { role: 'Oj, to odpocznij chwilę. Nie musimy się spieszyć.', nl: 'O, rust dan even uit. We hoeven ons niet te haasten.', en: "Oh, rest for a moment. We don't need to hurry." } },
+          { id: 'journey-tired', labelNl: 'Moe maar blij', labelEn: 'Tired but happy', starter: 'Byłem zmęczony, ale…', pl: 'Byłem zmęczony, ale cieszę się, że tu jestem.', alternatives: ['Byłam zmęczona, ale cieszę się, że tu jestem.'], intent: ['zmęczony','zmęczona','cieszę','jestem'], followUp: { role: 'Rozumiem. Usiądź wygodnie i czuj się jak u siebie.', nl: 'Dat begrijp ik. Ga lekker zitten en voel je thuis.', en: 'I understand. Sit comfortably and make yourself at home.' } },
         ],
-        coach: 'Use była because podróż is feminine. Dutch and English do not mark this on “was”.',
+        coach: 'Use była because podróż is feminine. A female speaker says byłam zmęczona rather than byłem zmęczony.',
       },
       {
         role: 'Chcesz kawy czy herbaty?',
         nl: 'Wil je koffie of thee?',
         en: 'Would you like coffee or tea?',
         suggestions: [
-          { pl: 'Poproszę kawę, dziękuję.', intent: ['kawę','dziękuję'] },
-          { pl: 'Herbatę, proszę.', intent: ['herbatę','proszę'] },
-          { pl: 'Nie, dziękuję. Może później.', intent: ['nie','dziękuję','później'] },
+          { id: 'drink-coffee', labelNl: 'Koffie graag', labelEn: 'Coffee, please', starter: 'Poproszę kawę…', pl: 'Poproszę kawę, dziękuję.', intent: ['kawę','dziękuję'], followUp: { role: 'Dobrze, zrobię ci kawę. Z mlekiem?', nl: 'Goed, ik maak koffie voor je. Met melk?', en: "Okay, I'll make you coffee. With milk?" } },
+          { id: 'drink-tea', labelNl: 'Thee graag', labelEn: 'Tea, please', starter: 'Herbatę, proszę.', pl: 'Herbatę, proszę.', intent: ['herbatę','proszę'], followUp: { role: 'Jasne. Mamy czarną i zieloną herbatę.', nl: 'Natuurlijk. We hebben zwarte en groene thee.', en: 'Sure. We have black and green tea.' } },
+          { id: 'drink-later', labelNl: 'Misschien later', labelEn: 'Maybe later', starter: 'Nie, dziękuję…', pl: 'Nie, dziękuję. Może później.', intent: ['nie','dziękuję','później'], followUp: { role: 'Dobrze, powiedz tylko, kiedy będziesz czegoś chciał.', nl: 'Goed, zeg het maar wanneer je iets wilt.', en: 'Okay, just tell me when you would like something.' } },
         ],
         coach: 'After poproszę, feminine kawa changes to kawę and herbata to herbatę.',
       },
@@ -742,69 +742,138 @@ export const CONVERSATIONS = {
         nl: 'Het eten is over een half uur klaar. Heb je honger?',
         en: 'Dinner will be ready in half an hour. Are you hungry?',
         suggestions: [
-          { pl: 'Tak, bardzo. Mogę w czymś pomóc?', intent: ['tak','bardzo','pomóc'] },
-          { pl: 'Trochę. Czy mogę nakryć do stołu?', intent: ['trochę','mogę'] },
+          { id: 'hungry-help', labelNl: 'Honger en helpen', labelEn: 'Hungry and offer help', starter: 'Tak, bardzo.', pl: 'Tak, bardzo. Mogę w czymś pomóc?', intent: ['tak','bardzo','pomóc'], followUp: { role: 'Bardzo miło. Możesz nakryć do stołu.', nl: 'Heel aardig. Je kunt de tafel dekken.', en: 'Very kind. You can set the table.' } },
+          { id: 'little-help', labelNl: 'Een beetje, tafel dekken', labelEn: 'A little; offer to set the table', starter: 'Trochę. Czy mogę…', pl: 'Trochę. Czy mogę nakryć do stołu?', intent: ['trochę','mogę','stół'], followUp: { role: 'Oczywiście. Talerze są w tej szafce.', nl: 'Natuurlijk. De borden staan in die kast.', en: 'Of course. The plates are in that cupboard.' } },
         ],
         coach: 'For a male speaker use głodny; a female speaker says głodna.',
       },
       {
-        role: 'Oczywiście. Możesz położyć talerze na stole.',
-        nl: 'Natuurlijk. Je kunt de borden op tafel zetten.',
-        en: 'Of course. You can put the plates on the table.',
+        role: 'Na stole będą pierogi, zupa i sałatka. Co najbardziej lubisz?',
+        nl: 'Er komen pierogi, soep en salade op tafel. Wat vind je het lekkerst?',
+        en: 'There will be pierogi, soup and salad. What do you like most?',
         suggestions: [
-          { pl: 'Jasne. Gdzie są talerze?', intent: ['jasne','gdzie','talerze'] },
-          { pl: 'Dobrze, już pomagam.', intent: ['dobrze','pomagam'] },
+          { id: 'food-pierogi', labelNl: 'Pierogi', labelEn: 'Pierogi', starter: 'Najbardziej lubię…', pl: 'Najbardziej lubię pierogi.', intent: ['najbardziej','lubię','pierogi'], followUp: { role: 'Wiedziałam! Zrobiłam dla ciebie specjalnie więcej pierogów.', nl: 'Dat wist ik! Ik heb speciaal voor jou extra pierogi gemaakt.', en: 'I knew it! I made extra pierogi especially for you.' } },
+          { id: 'food-everything', labelNl: 'Alles klinkt lekker', labelEn: 'Everything sounds good', starter: 'Wszystko brzmi…', pl: 'Wszystko brzmi bardzo smacznie.', intent: ['wszystko','smacznie'], followUp: { role: 'To dobrze, spróbujesz po trochu wszystkiego.', nl: 'Mooi, dan proef je van alles een beetje.', en: "Good, then you'll try a little of everything." } },
         ],
-        coach: 'Jasne is a natural, friendly “sure”. It is common in family speech.',
+        coach: 'Najbardziej lubię is a reusable chunk for saying what you like most.',
+      },
+      {
+        role: 'A co u was słychać? Jak wam się mieszka w Holandii?',
+        nl: 'En hoe gaat het met jullie? Hoe bevalt het wonen in Nederland?',
+        en: 'And how are things with you? How do you like living in the Netherlands?',
+        suggestions: [
+          { id: 'home-good', labelNl: 'Het gaat goed', labelEn: 'Things are going well', starter: 'U nas wszystko…', pl: 'U nas wszystko dobrze. Mieszka nam się bardzo dobrze.', intent: ['wszystko','dobrze','mieszka'], followUp: { role: 'To najważniejsze. Cieszę się, że jesteście zadowoleni.', nl: 'Dat is het belangrijkste. Ik ben blij dat jullie tevreden zijn.', en: "That's what matters. I'm glad you're happy." } },
+          { id: 'home-busy', labelNl: 'Druk, maar goed', labelEn: 'Busy, but good', starter: 'Ostatnio mamy dużo…', pl: 'Ostatnio mamy dużo pracy, ale poza tym wszystko dobrze.', intent: ['dużo','pracy','dobrze'], followUp: { role: 'Rozumiem. Dobrze, że teraz możecie trochę odpocząć.', nl: 'Begrijpelijk. Fijn dat jullie nu een beetje kunnen uitrusten.', en: "I understand. It's good you can rest a little now." } },
+        ],
+        coach: 'U nas wszystko dobrze is a compact family update that you can reuse often.',
+      },
+      {
+        role: 'Co chcecie robić jutro?',
+        nl: 'Wat willen jullie morgen doen?',
+        en: 'What would you like to do tomorrow?',
+        suggestions: [
+          { id: 'tomorrow-walk', labelNl: 'Een wandeling maken', labelEn: 'Go for a walk', starter: 'Może pójdziemy…', pl: 'Może pójdziemy na spacer po mieście.', intent: ['spacer','mieście'], followUp: { role: 'Świetny pomysł. Pokażę wam moje ulubione miejsce.', nl: 'Goed idee. Ik laat jullie mijn favoriete plek zien.', en: "Great idea. I'll show you my favourite place." } },
+          { id: 'tomorrow-family', labelNl: 'Tijd met familie', labelEn: 'Spend time with family', starter: 'Chcemy przede wszystkim…', pl: 'Chcemy przede wszystkim spędzić czas z rodziną.', intent: ['spędzić','czas','rodziną'], followUp: { role: 'Bardzo się cieszę. Dawno spokojnie nie rozmawialiśmy.', nl: 'Daar ben ik heel blij om. We hebben lang niet rustig bijgepraat.', en: "I'm very happy. We haven't had a calm talk for a long time." } },
+        ],
+        coach: 'Chcemy + infinitive is the natural frame for “we want to…”.',
+      },
+      {
+        role: 'Dobrze, chodźmy do stołu. Mam nadzieję, że będzie ci smakowało.',
+        nl: 'Goed, laten we aan tafel gaan. Ik hoop dat je het lekker vindt.',
+        en: "Okay, let's go to the table. I hope you enjoy it.",
+        suggestions: [
+          { id: 'finish-thanks', labelNl: 'Bedanken en complimenteren', labelEn: 'Thank and compliment', starter: 'Na pewno.', pl: 'Na pewno. Dziękuję za wszystko, pachnie wspaniale.', intent: ['dziękuję','pachnie','wspaniale'], followUp: { role: 'Nie ma za co. Smacznego!', nl: 'Graag gedaan. Eet smakelijk!', en: "You're welcome. Enjoy your meal!" } },
+          { id: 'finish-ready', labelNl: 'Klaar voor het eten', labelEn: 'Ready to eat', starter: 'Już nie mogę…', pl: 'Już nie mogę się doczekać. Smacznego!', intent: ['doczekać','smacznego'], followUp: { role: 'Smacznego! Cieszę się, że jesteś z nami.', nl: 'Eet smakelijk! Ik ben blij dat je bij ons bent.', en: "Enjoy! I'm happy you're with us." } },
+        ],
+        coach: 'Pachnie wspaniale is a warm, natural compliment before a meal.',
       },
     ],
   },
   'father-in-law': {
-    scenarioTitle: 'You are having coffee and talking about work and hobbies.',
+    scenarioTitle: 'A longer coffee conversation about work, motorsport and plans.',
     turns: [
       {
         role: 'Czym się zajmujesz w Holandii?',
         nl: 'Wat doe je voor werk in Nederland?',
         en: 'What do you do in the Netherlands?',
         suggestions: [
-          { pl: 'Pracuję w branży technologicznej.', intent: ['pracuję','branży'] },
-          { pl: 'Pracuję z domu i dużo rozmawiam z ludźmi.', intent: ['pracuję','domu','ludźmi'] },
+          { id: 'work-advice', labelNl: 'Technisch advies', labelEn: 'Technical consultancy', starter: 'Pracuję jako…', pl: 'Pracuję jako konsultant techniczny.', intent: ['pracuję','konsultant','techniczny'], followUp: { role: 'Brzmi odpowiedzialnie. Pracujesz nad dużymi projektami?', nl: 'Dat klinkt verantwoordelijk. Werk je aan grote projecten?', en: 'That sounds responsible. Do you work on large projects?' } },
+          { id: 'work-lighting', labelNl: 'Openbare verlichting', labelEn: 'Public lighting', starter: 'Zajmuję się…', pl: 'Zajmuję się projektami oświetlenia publicznego.', intent: ['zajmuję','oświetlenia','publicznego'], followUp: { role: 'Ciekawe. Czy dużo pracujesz z nowymi technologiami?', nl: 'Interessant. Werk je veel met nieuwe technologie?', en: 'Interesting. Do you work a lot with new technology?' } },
         ],
         coach: 'Learn Czym się zajmujesz? as one natural chunk for “What do you do?”.',
+      },
+      {
+        role: 'Lubisz swoją pracę?',
+        nl: 'Vind je je werk leuk?',
+        en: 'Do you like your work?',
+        suggestions: [
+          { id: 'work-like', labelNl: 'Ja, afwisselend', labelEn: 'Yes, varied', starter: 'Tak, bo…', pl: 'Tak, bo praca jest różnorodna i rozwiązuję dużo problemów.', intent: ['tak','różnorodna','problemów'], followUp: { role: 'To dobrze. Najważniejsze, żeby praca była ciekawa.', nl: 'Mooi. Het belangrijkste is dat het werk interessant blijft.', en: 'Good. The most important thing is that the work stays interesting.' } },
+          { id: 'work-busy', labelNl: 'Soms erg druk', labelEn: 'Sometimes very busy', starter: 'Tak, chociaż…', pl: 'Tak, chociaż czasami jest bardzo dużo pracy.', intent: ['tak','czasami','dużo','pracy'], followUp: { role: 'Znam to. Wtedy weekend jest jeszcze ważniejszy.', nl: 'Dat ken ik. Dan is het weekend nog belangrijker.', en: 'I know that. Then the weekend is even more important.' } },
+        ],
+        coach: 'Bo introduces a reason; chociaż introduces a contrast such as “although”.',
       },
       {
         role: 'A co lubisz robić w wolnym czasie?',
         nl: 'En wat doe je graag in je vrije tijd?',
         en: 'What do you like doing in your free time?',
         suggestions: [
-          { pl: 'Interesuję się sportami motorowymi.', intent: ['interesuję','sportami','motorowymi'] },
-          { pl: 'Jeżdżę na snowboardzie i lubię festiwale.', intent: ['snowboardzie','festiwale'] },
-          { pl: 'Zajmuję się bonsai.', intent: ['bonsai'] },
+          { id: 'hobby-racing', labelNl: 'Motorracen', labelEn: 'Motorcycle racing', starter: 'Jeżdżę motocyklem…', pl: 'Jeżdżę motocyklem po torze i interesuję się wyścigami.', intent: ['motocyklem','torze','wyścigami'], followUp: { role: 'Naprawdę? To musi być szybkie i trochę niebezpieczne.', nl: 'Echt? Dat moet snel en een beetje gevaarlijk zijn.', en: 'Really? That must be fast and a little dangerous.' } },
+          { id: 'hobby-mixed', labelNl: 'Snowboard, festivals en bonsai', labelEn: 'Snowboarding, festivals and bonsai', starter: 'Lubię snowboard…', pl: 'Lubię snowboard, festiwale i zajmuję się bonsai.', intent: ['snowboard','festiwale','bonsai'], followUp: { role: 'Masz dużo różnych zainteresowań. Z bonsai trzeba mieć cierpliwość.', nl: 'Je hebt veel verschillende interesses. Voor bonsai heb je geduld nodig.', en: 'You have many different interests. Bonsai requires patience.' } },
         ],
-        coach: 'Interesuję się requires the instrumental: sport → sportem, sporty → sportami.',
+        coach: 'Jeżdżę motocyklem means “I ride a motorcycle”; po torze adds “on a circuit”.',
       },
       {
-        role: 'Naprawdę? Ja też lubię wyścigi. Formuła 1 czy rajdy?',
-        nl: 'Echt? Ik houd ook van races. Formule 1 of rally?',
-        en: 'Really? I like racing too. Formula 1 or rally?',
+        role: 'Co najbardziej lubisz w jeździe po torze?',
+        nl: 'Wat vind je het leukst aan rijden op het circuit?',
+        en: 'What do you like most about riding on track?',
         suggestions: [
-          { pl: 'Najbardziej lubię Formułę 1.', intent: ['formułę','1'] },
-          { pl: 'Lubię oba, ale częściej oglądam Formułę 1.', intent: ['oba','formułę'] },
+          { id: 'racing-progress', labelNl: 'Steeds sneller worden', labelEn: 'Getting faster', starter: 'Najbardziej lubię…', pl: 'Najbardziej lubię poprawiać czasy okrążeń.', intent: ['poprawiać','czasy','okrążeń'], followUp: { role: 'Czyli ciągle analizujesz, gdzie możesz pojechać lepiej.', nl: 'Dus je analyseert steeds waar je beter kunt rijden.', en: 'So you constantly analyse where you can ride better.' } },
+          { id: 'racing-focus', labelNl: 'Concentratie en techniek', labelEn: 'Focus and technique', starter: 'Lubię koncentrację…', pl: 'Lubię koncentrację, technikę i poczucie prędkości.', intent: ['koncentrację','technikę','prędkości'], followUp: { role: 'Rozumiem. To chyba daje dużą satysfakcję.', nl: 'Ik begrijp het. Dat geeft vast veel voldoening.', en: 'I understand. That must be very satisfying.' } },
         ],
-        coach: 'Formuła changes to Formułę after lubię, just like kawa → kawę.',
+        coach: 'Czasy okrążeń means lap times; poprawiać means to improve repeatedly or progressively.',
+      },
+      {
+        role: 'Masz w tym roku jeszcze jakiś wyścig?',
+        nl: 'Heb je dit jaar nog een race?',
+        en: 'Do you have another race this year?',
+        suggestions: [
+          { id: 'race-yes', labelNl: 'Ja, binnenkort', labelEn: 'Yes, soon', starter: 'Tak, za kilka…', pl: 'Tak, za kilka tygodni mam kolejny wyścig.', intent: ['tak','tygodni','wyścig'], followUp: { role: 'Powodzenia! Mam nadzieję, że pogoda będzie dobra.', nl: 'Succes! Ik hoop dat het weer goed is.', en: 'Good luck! I hope the weather is good.' } },
+          { id: 'race-no', labelNl: 'Nog niet gepland', labelEn: 'Nothing planned yet', starter: 'Jeszcze nie wiem…', pl: 'Jeszcze nie wiem. Najpierw chcę dobrze potrenować.', intent: ['nie wiem','potrenować'], followUp: { role: 'Rozsądnie. Dobre przygotowanie jest najważniejsze.', nl: 'Verstandig. Goede voorbereiding is het belangrijkst.', en: 'Sensible. Good preparation is the most important thing.' } },
+        ],
+        coach: 'Za kilka tygodni means “in a few weeks”; use mam wyścig for a scheduled race.',
+      },
+      {
+        role: 'A oglądasz też Formułę 1?',
+        nl: 'Kijk je ook Formule 1?',
+        en: 'Do you also watch Formula 1?',
+        suggestions: [
+          { id: 'f1-yes', labelNl: 'Ja, vaak', labelEn: 'Yes, often', starter: 'Tak, oglądam…', pl: 'Tak, oglądam prawie każdy wyścig.', intent: ['tak','oglądam','każdy','wyścig'], followUp: { role: 'To następnym razem obejrzymy razem.', nl: 'Dan kijken we de volgende keer samen.', en: "Then we'll watch together next time." } },
+          { id: 'f1-sometimes', labelNl: 'Soms', labelEn: 'Sometimes', starter: 'Czasami, ale…', pl: 'Czasami, ale wolę sam jeździć niż oglądać.', intent: ['czasami','wolę','jeździć','oglądać'], followUp: { role: 'Rozumiem, aktywnie jest ciekawiej niż przed telewizorem.', nl: 'Begrijpelijk, zelf doen is leuker dan voor de televisie zitten.', en: 'I understand; doing it yourself is more interesting than watching television.' } },
+        ],
+        coach: 'Wolę X niż Y is the useful comparison frame “I prefer X to Y”.',
+      },
+      {
+        role: 'Dobrze się z tobą rozmawia. Napijemy się jeszcze kawy?',
+        nl: 'Het praat fijn met je. Nemen we nog koffie?',
+        en: 'It is nice talking with you. Shall we have another coffee?',
+        suggestions: [
+          { id: 'coffee-more', labelNl: 'Graag nog één', labelEn: 'One more, please', starter: 'Chętnie, poproszę…', pl: 'Chętnie, poproszę jeszcze jedną.', intent: ['chętnie','jeszcze','jedną'], followUp: { role: 'Świetnie. Zaraz zrobię.', nl: 'Prima. Ik maak hem meteen.', en: "Great. I'll make it now." } },
+          { id: 'coffee-no', labelNl: 'Nee, bedankt', labelEn: 'No, thank you', starter: 'Nie, dziękuję…', pl: 'Nie, dziękuję. Jedna kawa mi wystarczy.', intent: ['nie','dziękuję','wystarczy'], followUp: { role: 'Jasne. To może później coś zimnego.', nl: 'Natuurlijk. Misschien later iets kouds.', en: 'Sure. Maybe something cold later.' } },
+        ],
+        coach: 'Chętnie is a warm “gladly”; jedna kawa mi wystarczy means one coffee is enough for me.',
       },
     ],
   },
   grandmother: {
-    scenarioTitle: 'Christmas dinner with grandmother. She speaks slowly and warmly.',
+    scenarioTitle: 'A longer, affectionate family dinner with gentle questions and food talk.',
     turns: [
       {
-        role: 'Kars, kochanie, wesołych Świąt!',
-        nl: 'Kars, lieverd, vrolijk kerstfeest!',
-        en: 'Kars, dear, Merry Christmas!',
+        role: '{learner}, kochanie, wesołych Świąt!',
+        nl: 'Lieverd, vrolijk kerstfeest!',
+        en: 'Dear, Merry Christmas!',
         suggestions: [
-          { pl: 'Wesołych Świąt, babciu!', intent: ['wesołych','świąt','babciu'] },
-          { pl: 'Dziękuję, babciu. Nawzajem!', intent: ['dziękuję','babciu','nawzajem'] },
+          { id: 'xmas-wish', labelNl: 'Kerstwens terug', labelEn: 'Return the Christmas wish', starter: 'Wesołych Świąt…', pl: 'Wesołych Świąt, babciu!', intent: ['wesołych','świąt','babciu'], followUp: { role: 'Dziękuję, kochanie. Jak dobrze, że przyjechaliście.', nl: 'Dank je, lieverd. Wat fijn dat jullie gekomen zijn.', en: "Thank you, dear. It's so good that you came." } },
+          { id: 'xmas-thanks', labelNl: 'Bedanken en hetzelfde wensen', labelEn: 'Thank and say likewise', starter: 'Dziękuję, babciu…', pl: 'Dziękuję, babciu. Nawzajem!', intent: ['dziękuję','babciu','nawzajem'], followUp: { role: 'Dziękuję. Bardzo za wami tęskniłam.', nl: 'Dank je. Ik heb jullie erg gemist.', en: 'Thank you. I missed you very much.' } },
         ],
         coach: 'When addressing babcia directly, Polish uses the vocative babciu.',
       },
@@ -813,8 +882,8 @@ export const CONVERSATIONS = {
         nl: 'Proef de pierogi. Ik heb ze zelf gemaakt.',
         en: 'Try the pierogi. I made them myself.',
         suggestions: [
-          { pl: 'Dziękuję. Są naprawdę pyszne!', intent: ['dziękuję','pyszne'] },
-          { pl: 'Chętnie. Bardzo lubię pierogi.', intent: ['chętnie','lubię','pierogi'] },
+          { id: 'pierogi-delicious', labelNl: 'Ze zijn heerlijk', labelEn: 'They are delicious', starter: 'Dziękuję. Są…', pl: 'Dziękuję. Są naprawdę pyszne!', intent: ['dziękuję','pyszne'], followUp: { role: 'Cieszę się. Zrobiłam je według starego przepisu.', nl: 'Dat doet me goed. Ik heb ze volgens een oud recept gemaakt.', en: 'I am glad. I made them using an old recipe.' } },
+          { id: 'pierogi-love', labelNl: 'Ik houd van pierogi', labelEn: 'I love pierogi', starter: 'Chętnie. Bardzo…', pl: 'Chętnie. Bardzo lubię pierogi.', intent: ['chętnie','lubię','pierogi'], followUp: { role: 'To jedz, kochanie. Jest ich dużo.', nl: 'Eet dan, lieverd. Er zijn er genoeg.', en: 'Then eat, dear. There are plenty.' } },
         ],
         coach: 'Pierogi is plural, so “they are delicious” is są pyszne.',
       },
@@ -823,10 +892,40 @@ export const CONVERSATIONS = {
         nl: 'Nog een beetje?',
         en: 'A little more?',
         suggestions: [
-          { pl: 'Tak, poproszę jeszcze trochę.', intent: ['tak','poproszę','trochę'] },
-          { pl: 'Nie, dziękuję. Już wystarczy.', intent: ['nie','dziękuję','wystarczy'] },
+          { id: 'more-yes', labelNl: 'Ja, een beetje', labelEn: 'Yes, a little', starter: 'Tak, poproszę…', pl: 'Tak, poproszę jeszcze trochę.', intent: ['tak','poproszę','trochę'], followUp: { role: 'Proszę bardzo. Wiedziałam, że ci smakują.', nl: 'Alsjeblieft. Ik wist dat je ze lekker vond.', en: 'Here you are. I knew you liked them.' } },
+          { id: 'more-no', labelNl: 'Nee, het is genoeg', labelEn: 'No, that is enough', starter: 'Nie, dziękuję…', pl: 'Nie, dziękuję. Już wystarczy.', intent: ['nie','dziękuję','wystarczy'], followUp: { role: 'Dobrze, ale później będzie jeszcze ciasto.', nl: 'Goed, maar later komt er ook nog taart.', en: 'Okay, but there will also be cake later.' } },
         ],
-        coach: 'Poproszę is a compact, very useful polite request—more natural than translating “I want”.',
+        coach: 'Poproszę is a compact, useful request; już wystarczy politely says that is enough.',
+      },
+      {
+        role: 'Jak się czujesz? Wszystko dobrze?',
+        nl: 'Hoe voel je je? Gaat alles goed?',
+        en: 'How are you feeling? Is everything alright?',
+        suggestions: [
+          { id: 'health-good', labelNl: 'Alles gaat goed', labelEn: 'Everything is fine', starter: 'Tak, wszystko…', pl: 'Tak, wszystko dobrze. Dziękuję, że pytasz.', intent: ['tak','wszystko','dobrze','dziękuję'], followUp: { role: 'To dobrze. Trzeba o siebie dbać.', nl: 'Dat is goed. Je moet goed voor jezelf zorgen.', en: 'Good. You have to take care of yourself.' } },
+          { id: 'health-tired', labelNl: 'Een beetje moe', labelEn: 'A little tired', starter: 'Tylko trochę…', pl: 'Tylko trochę jestem zmęczony, ale poza tym dobrze.', alternatives: ['Tylko trochę jestem zmęczona, ale poza tym dobrze.'], intent: ['trochę','zmęczony','zmęczona','dobrze'], followUp: { role: 'To po kolacji odpoczniesz. Nie musisz nic robić.', nl: 'Dan rust je na het eten uit. Je hoeft niets te doen.', en: "Then you'll rest after dinner. You don't have to do anything." } },
+        ],
+        coach: 'A female speaker says zmęczona; a male speaker says zmęczony.',
+      },
+      {
+        role: 'A kiedy znowu przyjedziecie do Polski?',
+        nl: 'En wanneer komen jullie weer naar Polen?',
+        en: 'And when will you come to Poland again?',
+        suggestions: [
+          { id: 'visit-soon', labelNl: 'Hopelijk snel', labelEn: 'Hopefully soon', starter: 'Mam nadzieję…', pl: 'Mam nadzieję, że niedługo znowu przyjedziemy.', intent: ['nadzieję','niedługo','przyjedziemy'], followUp: { role: 'Ja też mam taką nadzieję. Zawsze na was czekam.', nl: 'Dat hoop ik ook. Ik wacht altijd op jullie.', en: 'I hope so too. I am always waiting for you.' } },
+          { id: 'visit-summer', labelNl: 'Misschien in de zomer', labelEn: 'Maybe in summer', starter: 'Może latem…', pl: 'Może latem, jeśli będziemy mieli urlop.', intent: ['latem','urlop'], followUp: { role: 'Latem jest pięknie. Będziemy dużo siedzieć w ogrodzie.', nl: 'In de zomer is het prachtig. Dan zitten we veel in de tuin.', en: 'It is beautiful in summer. We will spend lots of time in the garden.' } },
+        ],
+        coach: 'Mam nadzieję, że… is a highly reusable warm family phrase: “I hope that…”.',
+      },
+      {
+        role: 'Dobrze, teraz opowiedz mi coś o waszym domu i ogrodzie.',
+        nl: 'Goed, vertel me nu iets over jullie huis en tuin.',
+        en: 'Okay, now tell me something about your home and garden.',
+        suggestions: [
+          { id: 'garden-tree', labelNl: 'Tuin en bijzondere boom', labelEn: 'Garden and a special tree', starter: 'Mamy ogród…', pl: 'Mamy ogród i chcemy posadzić w nim piękne drzewo.', intent: ['ogród','posadzić','drzewo'], followUp: { role: 'To wspaniale. Drzewo daje domowi dużo uroku.', nl: 'Wat mooi. Een boom geeft een huis veel karakter.', en: 'Wonderful. A tree gives a home lots of character.' } },
+          { id: 'garden-bonsai', labelNl: 'Over bonsai vertellen', labelEn: 'Talk about bonsai', starter: 'Mam też kilka…', pl: 'Mam też kilka drzewek bonsai i lubię się nimi zajmować.', intent: ['drzewek','bonsai','zajmować'], followUp: { role: 'Kiedyś musisz mi je pokazać na zdjęciach.', nl: 'Je moet ze me ooit op foto’s laten zien.', en: 'You must show them to me in photos sometime.' } },
+        ],
+        coach: 'Chcemy posadzić means “we want to plant”; zajmować się means to look after or be involved with.',
       },
     ],
   },

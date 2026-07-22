@@ -1,4 +1,4 @@
-import { WORDS } from './data.js?v=1.4.1';
+import { WORDS } from './data.js?v=1.5';
 
 const POLISH_LETTER_RE = /[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]/;
 const WORD_TOKEN_RE = /^[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż-]+$/;

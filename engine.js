@@ -5,9 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.4.1';
-import { getTodayKey } from './storage.js?v=1.4.1';
-import { explainPolishDifference } from './polish.js?v=1.4.1';
+} from './data.js?v=1.5';
+import { getTodayKey } from './storage.js?v=1.5';
+import { explainPolishDifference } from './polish.js?v=1.5';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -2407,6 +2407,9 @@ export const evaluateConversationReply = (text, turn) => {
     correction,
     correctedText,
     suggestion: best.suggestion?.pl || turn.suggestions?.[0]?.pl || '',
+    matchedSuggestionId: best.score >= 0.3 ? (best.suggestion?.id || null) : null,
+    matchedSuggestion: best.score >= 0.3 ? (best.suggestion || null) : null,
+    followUp: best.score >= 0.3 ? (best.suggestion?.followUp || null) : null,
     errorType: correction ? 'grammar_correction' : best.evaluation?.errorType || (accepted ? 'intent_match' : 'different_answer'),
     evaluation: best.evaluation,
   };

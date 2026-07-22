@@ -1,10 +1,10 @@
-BLISKO 1.5 - FAMILY CONVERSATION UPGRADE
+BLISKO 1.6 - VOCABULARY EXPANSION
 
-Upload every file in this folder to the same GitHub Pages folder, replacing the previous build.
-Do not upload only app.js: the service worker verifies that all files belong to one matching build.
+Upload every file and folder from this directory to the same GitHub Pages branch/folder that currently hosts Blisko. Replace the existing files rather than adding a second app folder.
 
-This update preserves learning progress stored on the device and migrates older backups automatically.
-It includes the 1.4.2 fix for the full-screen flash after answering and the refresh effect when tapping word tiles.
-It also adds editable family profiles, longer family conversations, intention starters, and answer-dependent reactions.
+Important:
+- Keep the filenames unchanged.
+- Upload index.html, app.js, data.js, engine.js, tutor.js, polish.js, storage.js, styles.css, sw.js, manifest.webmanifest, BUILD.txt, and all icons together.
+- Existing progress is stored locally and remains compatible with this update.
 
-After deployment, open the hosted app once while online. The service worker will install the verified 1.5 shell and perform one controlled restart if needed.
+After deployment, open the hosted app once while online. The service worker will install the verified 1.6 shell and perform one controlled restart if needed.

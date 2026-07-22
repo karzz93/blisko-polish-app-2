@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.5';
+} from './data.js?v=1.6';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.5';
+} from './storage.js?v=1.6';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -65,8 +65,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.5';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.5';
+} from './engine.js?v=1.6';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.6';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -75,7 +75,7 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.5';
+} from './polish.js?v=1.6';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -1275,6 +1275,12 @@ function renderLearn() {
             <p>The highest-value topic for your current family-conversation map.</p>
             <span class="focus-footer"><span>Adaptive · 8 exercises</span><b>Start ${icon('arrow')}</b></span>
           </button>
+          <button class="card focus-card" type="button" data-action="start-vocabulary-boost" style="--focus:var(--amber);--focus-soft:var(--amber-soft)">
+            <span class="focus-icon">${icon('book')}</span>
+            <h3>Vocabulary boost</h3>
+            <p>Train a balanced mix of due, weak, and new family-first words without repeating only the basics.</p>
+            <span class="focus-footer"><span>12 words · ${WORDS.length} available</span><b>Build vocabulary ${icon('arrow')}</b></span>
+          </button>
           <button class="card focus-card" type="button" data-action="start-rescue-session" style="--focus:var(--coral);--focus-soft:var(--coral-soft)">
             <span class="focus-icon">${icon('help')}</span>
             <h3>Conversation rescue kit</h3>
@@ -1309,7 +1315,7 @@ function renderLearn() {
                 <span class="topic-score">${Math.round(readiness * 100)}% ready</span>
                 <span class="topic-emoji">${topic.emoji}</span>
                 <strong>${escapeHtml(topic.title)}</strong>
-                <p>${escapeHtml(topic.subtitle)}</p>
+                <p>${escapeHtml(topic.subtitle)} · ${WORDS.filter((word) => word.topic === topic.id).length} words</p>
               </button>
             `;
           }).join('')}
@@ -2337,9 +2343,9 @@ function renderLibrary() {
         <div>
           <p class="eyebrow">HIGH-FREQUENCY, FAMILY-FIRST</p>
           <h2>Your useful Polish, in context.</h2>
-          <p>The starter corpus is curated around verbs, family, everyday conversation, polite phrases, and your own interests. Every item connects to an example or sentence pattern.</p>
+          <p>The expanded corpus is curated around family, everyday conversation, useful verbs, travel, food, work, and your own interests. Every word has a practical example and enters adaptive practice.</p>
         </div>
-        <div class="intro-stat"><strong>${WORDS.length}</strong><span>curated starter words</span></div>
+        <div class="intro-stat"><strong>${WORDS.length}</strong><span>active vocabulary words</span></div>
       </section>
 
       <section>
@@ -2354,7 +2360,7 @@ function renderLibrary() {
             <option value="known" ${libraryFilter === 'known' ? 'selected' : ''}>Learned</option>
             <option value="weak" ${libraryFilter === 'weak' ? 'selected' : ''}>Weak</option>
           </select>
-          <button class="secondary-button" type="button" data-action="start-session" data-mode="smart">${icon('play')} Learn next</button>
+          <button class="secondary-button" type="button" data-action="start-vocabulary-boost">${icon('play')} Practice 12 words</button>
         </div>
         <div class="card word-table">
           <div class="word-row header"><span>Polish</span><span>Meaning</span><span>Type</span><span>Topic</span><span>Mastery</span></div>
@@ -2394,6 +2400,41 @@ function renderWordRows() {
     `;
   }).join('');
 }
+
+const getVocabularyBoostIds = ({ length = 12, topic = null } = {}) => {
+  const now = Date.now();
+  const ranked = WORDS
+    .filter((word) => !topic || word.topic === topic)
+    .map((word) => {
+      const progress = state.progress.items[word.id];
+      const dueAt = progress?.dueAt ? new Date(progress.dueAt).getTime() : Number.POSITIVE_INFINITY;
+      const due = Boolean(progress && Number.isFinite(dueAt) && dueAt <= now);
+      const weak = Boolean(progress && (progress.lapses > 0 || progress.confidence < 0.5));
+      const unseen = !progress;
+      const priority = due ? 1000 : weak ? 760 : unseen ? 520 : 180;
+      const confidencePenalty = progress ? (1 - Number(progress.confidence || 0)) * 120 : 0;
+      const lapseBoost = Number(progress?.lapses || 0) * 45;
+      const frequencyBoost = Math.max(0, 260 - Number(word.frequency || 260)) * 0.15;
+      return { word, score: priority + confidencePenalty + lapseBoost + frequencyBoost };
+    })
+    .sort((a, b) => b.score - a.score || Number(a.word.frequency || 0) - Number(b.word.frequency || 0));
+
+  const selected = [];
+  const topicCounts = new Map();
+  ranked.forEach((entry) => {
+    if (selected.length >= length) return;
+    const used = topicCounts.get(entry.word.topic) || 0;
+    if (topic || used < 2) {
+      selected.push(entry);
+      topicCounts.set(entry.word.topic, used + 1);
+    }
+  });
+  ranked.forEach((entry) => {
+    if (selected.length >= length || selected.some((candidate) => candidate.word.id === entry.word.id)) return;
+    selected.push(entry);
+  });
+  return selected.map(({ word }) => word.id);
+};
 
 const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8, title = null, customExercises = null } = {}) => {
   const language = primaryLanguage();
@@ -4712,6 +4753,13 @@ const handleAction = (event) => {
       break;
     case 'start-topic':
       startSession({ mode: 'smart', topic: target.dataset.topic, title: TOPICS.find((topic) => topic.id === target.dataset.topic)?.title });
+      break;
+    case 'start-vocabulary-boost':
+      startSession({
+        mode: 'smart',
+        itemIds: getVocabularyBoostIds({ length: 12 }),
+        title: 'Vocabulary boost',
+      });
       break;
     case 'start-rescue-session':
       startSession({

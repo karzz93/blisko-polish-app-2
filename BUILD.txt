@@ -1,8 +1,8 @@
-Blisko 1.5 family conversation upgrade
-Includes the 1.4.2 smooth-interaction fix: lesson answers and word tiles no longer rebuild the full-screen lesson modal
-Adds editable real-family profiles for mother-in-law, father-in-law, and grandmother
-Adds topics, common questions, relationship labels, and the next likely occasion to each family profile
-Expands the three core family conversations to six or seven turns
-Adds answer-dependent family reactions and stores the chosen branch route
-Adds intention chips that provide only a short Polish sentence starter rather than revealing the full answer
-Preserves existing learning progress and migrates older backups to schema version 6
+Blisko 1.6 vocabulary expansion
+Includes the 1.4.2 smooth-interaction fix: lesson answers and word tiles do not rebuild the full-screen lesson modal
+Preserves the 1.5 editable family profiles and branching family conversations
+Expands the vocabulary from 122 to 250 practical Polish words
+Adds 18 contextual phrases, bringing the phrase library to 82
+Adds a dedicated 12-word Vocabulary boost using due, weak, and new vocabulary across varied topics
+Shows vocabulary counts for each real-life topic
+Keeps existing progress, reviews, family profiles, and conversation history intact

@@ -1,7 +1,7 @@
 {
   "name": "Blisko — Polish for family",
   "short_name": "Blisko",
-  "description": "An adaptive, offline-first Polish coach with listening and pronunciation practice, skill-specific memory, custom family profiles, and longer branching conversations.",
+  "description": "An adaptive, offline-first Polish coach with error-aware practice, reusable sentence-pattern workouts, listening, pronunciation, and family conversations.",
   "id": "./index.html",
   "start_url": "./index.html#dashboard",
   "scope": "./",

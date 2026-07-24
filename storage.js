@@ -5,7 +5,7 @@ const STATE_KEY = 'app-state-v1';
 const SAFETY_BACKUPS_KEY = 'safety-backups-v1';
 const FALLBACK_KEY = 'blisko-app-state-v1';
 const FALLBACK_BACKUPS_KEY = 'blisko-safety-backups-v1';
-const CURRENT_SCHEMA_VERSION = 6;
+const CURRENT_SCHEMA_VERSION = 7;
 const MAX_SAFETY_BACKUPS = 5;
 
 const SKILL_KEYS = ['reading', 'listening', 'guidedProduction', 'freeProduction', 'pronunciation'];
@@ -270,6 +270,39 @@ const migrateState = (state) => {
     progress.almostKnown = Number(progress.almostKnown || 0);
     progress.activeRecallRecoveries = Number(progress.activeRecallRecoveries || 0);
     progress.skills = migrateSkillMap(progress.skills);
+    progress.errorProfile = progress.errorProfile && typeof progress.errorProfile === 'object' && !Array.isArray(progress.errorProfile)
+      ? progress.errorProfile
+      : {};
+    if (previousSchema < 7 && !Object.keys(progress.errorProfile).length) {
+      progress.history.forEach((entry) => {
+        let type = entry.recordedErrorType || entry.errorType || null;
+        if (['exact','accepted_alternative','intent_match'].includes(type)) type = null;
+        if (!type && entry.confidenceState === 'almost') type = 'almost_known';
+        if (!type && Number(entry.hintLevel || 0) >= 3 && entry.correct !== false) type = 'hint_dependency';
+        if (!type && (entry.correct === false || Number(entry.rating) === 0)) type = 'retrieval_failure';
+        if (!type) return;
+        const existing = progress.errorProfile[type] || { count: 0, pressure: 0, recoveries: 0 };
+        existing.count = Number(existing.count || 0) + 1;
+        existing.pressure = Math.min(12, Number(existing.pressure || 0) + (entry.correct === false ? 1.2 : 0.75));
+        existing.lastAt = entry.at || existing.lastAt || null;
+        existing.lastExerciseType = entry.exerciseType || null;
+        existing.lastSkillKey = entry.skillKey || null;
+        progress.errorProfile[type] = existing;
+      });
+    }
+    Object.entries(progress.errorProfile).forEach(([type, entry]) => {
+      progress.errorProfile[type] = {
+        count: Number(entry?.count || 0),
+        pressure: Math.max(0, Number(entry?.pressure ?? entry?.count ?? 0) || 0),
+        recoveries: Number(entry?.recoveries || 0),
+        lastAt: entry?.lastAt || null,
+        lastSuccessAt: entry?.lastSuccessAt || null,
+        lastExerciseType: entry?.lastExerciseType || null,
+        lastSkillKey: entry?.lastSkillKey || null,
+      };
+    });
+    progress.lastErrorType = progress.lastErrorType || null;
+    progress.lastErrorAt = progress.lastErrorAt || null;
     migrateScaffoldProgress(progress);
   });
 

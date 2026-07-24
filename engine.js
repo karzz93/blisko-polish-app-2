@@ -5,9 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.6';
-import { getTodayKey } from './storage.js?v=1.6';
-import { explainPolishDifference } from './polish.js?v=1.6';
+} from './data.js?v=1.7';
+import { getTodayKey } from './storage.js?v=1.7';
+import { explainPolishDifference } from './polish.js?v=1.7';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -128,6 +128,114 @@ export const PATTERN_MAP = new Map(PATTERNS.map((item) => [item.id, item]));
 
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const average = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+
+export const ERROR_TYPE_META = {
+  ending: { label: 'Word endings', focus: 'Type the full form and notice the ending.', exercise: 'typing' },
+  diacritics: { label: 'Polish letters', focus: 'Retrieve the spelling with ą, ć, ę, ł, ń, ó, ś, ź, or ż.', exercise: 'typing' },
+  minor_spelling: { label: 'Spelling', focus: 'Produce the word instead of only recognising it.', exercise: 'typing' },
+  spelling_or_form: { label: 'Spelling or form', focus: 'Type the complete Polish form from memory.', exercise: 'typing' },
+  word_order: { label: 'Word order', focus: 'Rebuild the sentence in natural Polish order.', exercise: 'ordering' },
+  missing_word: { label: 'Missing words', focus: 'Rebuild the whole sentence so every speaking block is present.', exercise: 'ordering' },
+  extra_word: { label: 'Extra words', focus: 'Practise the shortest natural Polish version.', exercise: 'ordering' },
+  pronoun_emphasis: { label: 'Unnecessary pronouns', focus: 'Practise the natural version without English-style pronoun emphasis.', exercise: 'typing' },
+  different_answer: { label: 'Retrieval gap', focus: 'Step from recognition back to producing the Polish answer.', exercise: 'choice' },
+  empty: { label: 'No answer yet', focus: 'Begin with recognition, then rebuild the answer.', exercise: 'choice' },
+  retrieval_failure: { label: 'Retrieval failure', focus: 'Bring the item back soon in a smaller productive step.', exercise: 'ordering' },
+  almost_known: { label: 'Almost known', focus: 'Retrieve it again soon before the memory fades.', exercise: 'ordering' },
+  hint_dependency: { label: 'Hint dependency', focus: 'Use a smaller first step, then remove support after success.', exercise: 'choice' },
+};
+
+const ignoredErrorTypes = new Set(['exact', 'accepted_alternative', 'intent_match']);
+
+const ensureErrorProfile = (progress) => {
+  if (!progress || typeof progress !== 'object') return {};
+  if (!progress.errorProfile || typeof progress.errorProfile !== 'object' || Array.isArray(progress.errorProfile)) {
+    progress.errorProfile = {};
+  }
+  Object.entries(progress.errorProfile).forEach(([key, entry]) => {
+    progress.errorProfile[key] = {
+      count: Number(entry?.count || 0),
+      pressure: Math.max(0, Number(entry?.pressure ?? entry?.count ?? 0) || 0),
+      recoveries: Number(entry?.recoveries || 0),
+      lastAt: entry?.lastAt || null,
+      lastSuccessAt: entry?.lastSuccessAt || null,
+      lastExerciseType: entry?.lastExerciseType || null,
+      lastSkillKey: entry?.lastSkillKey || null,
+    };
+  });
+  return progress.errorProfile;
+};
+
+const resolveFrictionType = ({ errorType = null, correct = true, rating = 2, hintLevel = 0, confidenceState = null } = {}) => {
+  if (confidenceState === 'almost') return 'almost_known';
+  if (Number(hintLevel || 0) >= 3 && correct !== false) return 'hint_dependency';
+  if (errorType && !ignoredErrorTypes.has(errorType)) return errorType;
+  if (correct === false || Number(rating) === 0) return 'retrieval_failure';
+  return null;
+};
+
+const updateItemErrorProfile = (progress, exercise = {}, rating = 2, at = new Date().toISOString()) => {
+  const profile = ensureErrorProfile(progress);
+  const frictionType = resolveFrictionType({
+    errorType: exercise.errorType,
+    correct: exercise.correct,
+    rating,
+    hintLevel: exercise.hintLevel,
+    confidenceState: exercise.confidenceState,
+  });
+  const targetType = exercise.targetErrorType || null;
+
+  if (frictionType) {
+    const entry = profile[frictionType] || { count: 0, pressure: 0, recoveries: 0 };
+    const severity = exercise.correct === false || Number(rating) === 0 ? 1.25 : Number(exercise.hintLevel || 0) >= 3 ? 0.85 : 0.65;
+    entry.count = Number(entry.count || 0) + 1;
+    entry.pressure = Math.min(12, Number(entry.pressure || 0) * 0.94 + severity);
+    entry.lastAt = at;
+    entry.lastExerciseType = exercise.type || null;
+    entry.lastSkillKey = getExerciseSkill(exercise);
+    profile[frictionType] = entry;
+    progress.lastErrorType = frictionType;
+    progress.lastErrorAt = at;
+  } else if (targetType && profile[targetType]) {
+    const entry = profile[targetType];
+    const recoveryFactor = Number(rating) >= 3 ? 0.52 : Number(rating) >= 2 ? 0.68 : 0.84;
+    entry.pressure = Math.max(0, Number(entry.pressure || 0) * recoveryFactor);
+    entry.recoveries = Number(entry.recoveries || 0) + 1;
+    entry.lastSuccessAt = at;
+    profile[targetType] = entry;
+  }
+  return frictionType;
+};
+
+export const getDominantItemError = (progress = null) => {
+  if (!progress) return null;
+  const profile = ensureErrorProfile(progress);
+  const now = Date.now();
+  return Object.entries(profile)
+    .map(([type, entry]) => {
+      const ageDays = entry.lastAt ? Math.max(0, (now - new Date(entry.lastAt).getTime()) / DAY_MS) : 90;
+      const recency = 1 / (1 + ageDays / 35);
+      const score = Number(entry.pressure || 0) * (0.55 + recency * 0.45) + Math.min(1.2, Number(entry.count || 0) * 0.12);
+      return { type, ...entry, score, meta: ERROR_TYPE_META[type] || { label: type.replaceAll('_', ' '), focus: 'Practise this form again.', exercise: 'typing' } };
+    })
+    .filter((entry) => entry.score >= 0.35)
+    .sort((left, right) => right.score - left.score)[0] || null;
+};
+
+const exercisePlanForError = (error, item) => {
+  if (!error) return null;
+  let type = error.meta?.exercise || 'typing';
+  const canOrder = item.itemType === 'phrase' && item.pl.replace(/[.!?]/g, '').split(/\s+/).filter(Boolean).length >= 3;
+  if (type === 'ordering' && !canOrder) type = 'typing';
+  const skill = type === 'choice' ? 'guidedProduction' : type === 'ordering' ? 'guidedProduction' : 'freeProduction';
+  return {
+    type,
+    targetSkill: skill,
+    targetErrorType: error.type,
+    adaptiveTargetReason: `${error.meta.label} keeps returning. ${error.meta.focus}`,
+  };
+};
+
 
 const seededRandom = (seed) => {
   let value = 0;
@@ -1101,6 +1209,9 @@ export const ensureItemProgress = (state, itemId) => {
     lastScaffoldReason: null,
     lastScaffoldAt: null,
     skills: Object.fromEntries(ITEM_SKILL_KEYS.map((key) => [key, createItemSkillEntry()])),
+    errorProfile: {},
+    lastErrorType: null,
+    lastErrorAt: null,
   };
   state.progress.items[itemId] = {
     ...defaults,
@@ -1110,6 +1221,7 @@ export const ensureItemProgress = (state, itemId) => {
   if (!Array.isArray(state.progress.items[itemId].hintHistory)) state.progress.items[itemId].hintHistory = [];
   ensureScaffoldFields(state.progress.items[itemId]);
   ensureItemSkills(state.progress.items[itemId]);
+  ensureErrorProfile(state.progress.items[itemId]);
   return state.progress.items[itemId];
 };
 
@@ -1435,6 +1547,8 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     confidenceState,
   });
 
+  const recordedErrorType = updateItemErrorProfile(progress, { ...exercise, hintLevel, confidenceState }, rawRating, now.toISOString());
+
   progress.reps += 1;
   progress.lastReviewedAt = now.toISOString();
   progress.lastRating = numericRating;
@@ -1453,7 +1567,10 @@ export const reviewItem = (state, itemId, rating, exercise = {}) => {
     adaptiveSupportLevel: Number(exercise.adaptiveSupportLevel || 0),
     originalExerciseType: exercise.originalExerciseType || null,
     skillKey: getExerciseSkill(exercise),
-    errorType: exercise.errorType || null,
+    errorType: exercise.errorType || recordedErrorType || null,
+    recordedErrorType,
+    targetErrorType: exercise.targetErrorType || null,
+    adaptiveTargetReason: exercise.adaptiveTargetReason || null,
   });
   progress.history = progress.history.slice(-30);
 
@@ -1572,10 +1689,31 @@ const chooseBaseExerciseType = (item, progress, index, mode) => {
   if (mode === 'speaking') return { type: index % 2 === 0 ? 'speaking' : 'typing', targetSkill: index % 2 === 0 ? 'pronunciation' : 'freeProduction' };
   if (mode === 'listening') return { type: index % 2 === 0 ? 'listening' : 'choice', targetSkill: index % 2 === 0 ? 'listening' : 'reading' };
 
-  const weakestSkill = getWeakestItemSkill(progress);
-  const shouldTargetGap = Boolean(progress?.reps && weakestSkill && (mode === 'review' || index % 2 === 0));
-  if (shouldTargetGap) return { type: exerciseTypeForSkill(weakestSkill, item), targetSkill: weakestSkill };
+  const dominantError = getDominantItemError(progress);
+  const shouldTargetError = Boolean(dominantError && (
+    mode === 'mistakes'
+    || (mode === 'review' && dominantError.score >= 0.55)
+    || (mode === 'smart' && dominantError.score >= 1.1 && index % 3 === 0)
+  ));
+  if (shouldTargetError) {
+    const errorPlan = exercisePlanForError(dominantError, item);
+    if (errorPlan) return errorPlan;
+  }
 
+  const weakestSkill = getWeakestItemSkill(progress);
+  const shouldTargetGap = Boolean(progress?.reps && weakestSkill && (mode === 'review' || mode === 'mistakes' || index % 2 === 0));
+  if (shouldTargetGap) {
+    return {
+      type: exerciseTypeForSkill(weakestSkill, item),
+      targetSkill: weakestSkill,
+      adaptiveTargetReason: `Your ${weakestSkill === 'freeProduction' ? 'free recall' : weakestSkill === 'guidedProduction' ? 'guided production' : weakestSkill} evidence is weaker for this item.`,
+    };
+  }
+
+  if (mode === 'mistakes') {
+    const fallbackType = item.itemType === 'phrase' && item.pl.replace(/[.!?]/g, '').split(/\s+/).length >= 3 ? 'ordering' : 'typing';
+    return { type: fallbackType, targetSkill: fallbackType === 'ordering' ? 'guidedProduction' : 'freeProduction', adaptiveTargetReason: 'This item is in your mistake notebook, so recognition alone is not enough.' };
+  }
   if (mode === 'review') {
     if (!progress || progress.confidence < 0.25) return { type: index % 2 ? 'choice' : 'typing', targetSkill: index % 2 ? 'reading' : 'freeProduction' };
     const rotation = [
@@ -1621,11 +1759,14 @@ const chooseExerciseType = (item, progress, index, mode) => {
 
   // Listening and pronunciation stay modality-specific. Productive written
   // tasks step down after repeated hint use, while the skill gap remains known.
+  // Precision errors such as endings and Polish letters keep a typing step at
+  // support level 1; word tiles would reveal the exact form that needs repair.
+  const precisionError = ['ending','diacritics','minor_spelling','spelling_or_form','pronoun_emphasis'].includes(basePlan.targetErrorType);
   if (!['listening', 'speaking'].includes(originalType)) {
     if (adaptiveSupportLevel >= 2 && ['typing', 'ordering'].includes(originalType)) {
       type = 'choice';
       effectiveSkill = 'guidedProduction';
-    } else if (adaptiveSupportLevel >= 1 && originalType === 'typing') {
+    } else if (adaptiveSupportLevel >= 1 && originalType === 'typing' && !precisionError) {
       type = canOrder ? 'ordering' : 'choice';
       effectiveSkill = 'guidedProduction';
     }
@@ -1638,6 +1779,8 @@ const chooseExerciseType = (item, progress, index, mode) => {
     effectiveSkill,
     adaptiveSupportLevel,
     adjusted: type !== originalType,
+    targetErrorType: basePlan.targetErrorType || null,
+    adaptiveTargetReason: basePlan.adaptiveTargetReason || '',
   };
 };
 
@@ -1673,6 +1816,8 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
     originalExerciseType: exercisePlan.originalType,
     adaptiveSupportLevel: exercisePlan.adaptiveSupportLevel,
     adaptiveSupportAdjusted: exercisePlan.adjusted,
+    targetErrorType: exercisePlan.targetErrorType || null,
+    adaptiveTargetReason: exercisePlan.adaptiveTargetReason || '',
     adaptiveSupportReason: exercisePlan.adjusted
       ? (exercisePlan.adaptiveSupportLevel >= 2
         ? 'Repeated hint use changed free recall into recognition.'
@@ -1868,6 +2013,37 @@ export const getWeakItems = (state, limit = 4) => [...ITEM_MAP.values()]
     return scoreB - scoreA;
   })
   .slice(0, limit);
+
+export const getErrorNotebook = (state, limit = 12) => {
+  const now = Date.now();
+  return [...ITEM_MAP.values()]
+    .map((item) => {
+      const progress = state.progress.items[item.id];
+      if (!progress) return null;
+      const dominant = getDominantItemError(progress);
+      if (!dominant) return null;
+      const recurring = Number(dominant.count || 0) >= 2 || Number(dominant.pressure || 0) >= 1.7 || Number(progress.lapses || 0) >= 2;
+      if (!recurring) return null;
+      const ageDays = dominant.lastAt ? Math.max(0, (now - new Date(dominant.lastAt).getTime()) / DAY_MS) : 90;
+      const weakness = (1 - Number(progress.confidence || 0)) * 2.4 + Number(progress.lapses || 0) * 0.45;
+      const score = dominant.score + weakness + Math.max(0, 1 - ageDays / 30);
+      return {
+        item,
+        progress,
+        errorType: dominant.type,
+        label: dominant.meta.label,
+        focus: dominant.meta.focus,
+        count: Number(dominant.count || 0),
+        pressure: Number(dominant.pressure || 0),
+        lastAt: dominant.lastAt || progress.lastErrorAt || null,
+        lastExerciseType: dominant.lastExerciseType || null,
+        score,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+};
 
 export const getTopicReadiness = (state, topicId) => {
   const relevantPhrases = PHRASES.filter((phrase) => phrase.topic === topicId);
@@ -2454,6 +2630,14 @@ export const getPatternSentence = (pattern, selections = {}) => {
 
 export const getPatternTranslation = (pattern, selections = {}, language = 'nl') => {
   const values = { ...pattern.default, ...selections };
+  if (pattern.translationTemplates?.[language]) {
+    let translated = pattern.translationTemplates[language];
+    Object.entries(values).forEach(([slot, value]) => {
+      const option = pattern.slots?.[slot]?.find((entry) => entry.value === value);
+      translated = translated.replace(`{${slot}}`, option?.[language] || value);
+    });
+    return translated;
+  }
   const selected = Object.entries(values).map(([slot, value]) => {
     const option = pattern.slots[slot]?.find((entry) => entry.value === value);
     return option?.[language] || value;

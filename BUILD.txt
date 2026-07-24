@@ -1,8 +1,9 @@
-Blisko 1.6 vocabulary expansion
+Blisko 1.7 adaptive practice and sentence-pattern expansion
 Includes the 1.4.2 smooth-interaction fix: lesson answers and word tiles do not rebuild the full-screen lesson modal
 Preserves the 1.5 editable family profiles and branching family conversations
-Expands the vocabulary from 122 to 250 practical Polish words
-Adds 18 contextual phrases, bringing the phrase library to 82
-Adds a dedicated 12-word Vocabulary boost using due, weak, and new vocabulary across varied topics
-Shows vocabulary counts for each real-life topic
-Keeps existing progress, reviews, family profiles, and conversation history intact
+Preserves the 1.6 corpus of 250 practical words and 82 contextual phrases
+Adds an error-aware learner model that distinguishes endings, spelling, word order, missing words, retrieval gaps, and hint dependence
+Adds a personal Error Notebook and a Fix my mistakes session generated from recurring friction
+Expands the Sentence Pattern Lab from 5 to 14 reusable frames
+Adds a seven-pattern workout that progresses from recognition to word ordering and free production
+Migrates existing review history into schema 7 without deleting progress, family profiles, or conversations

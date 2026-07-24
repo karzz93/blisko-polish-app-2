@@ -1,4 +1,4 @@
-export const APP_VERSION = '1.6';
+export const APP_VERSION = '1.7';
 
 
 
@@ -844,6 +844,160 @@ export const PATTERNS = [
     noteNl: 'Letterlijk: “het hoofd doet mij pijn”. Daarom is het boli, niet mam.',
     noteEn: 'Literally: “the head hurts me”. This is why Polish uses boli rather than mam.',
   },
+  {
+    id: 'pattern_would_like', topic: 'visiting', title: 'Saying what you would like', subtitle: 'A polite personal wish', grammar: ['conditional_polite'],
+    template: 'Chciałbym {wish}.',
+    translationTemplates: { nl: 'Ik zou graag {wish}.', en: 'I would like to {wish}.' },
+    default: { wish: 'napić się kawy' },
+    slots: {
+      wish: [
+        { value: 'napić się kawy', nl: 'koffie willen drinken', en: 'drink coffee' },
+        { value: 'odpocząć', nl: 'even willen uitrusten', en: 'rest for a while' },
+        { value: 'pojechać do Polski', nl: 'naar Polen willen reizen', en: 'travel to Poland' },
+        { value: 'porozmawiać z babcią', nl: 'met oma willen praten', en: 'talk to grandma' },
+        { value: 'zarezerwować stolik', nl: 'een tafel willen reserveren', en: 'reserve a table' },
+      ],
+    },
+    noteNl: 'Chciałbym is de mannelijke vorm van “ik zou graag willen”. Daarna volgt een infinitief of vaste werkwoordgroep.',
+    noteEn: 'Chciałbym is the male-speaker form of “I would like”. It is followed by an infinitive or verb phrase.',
+  },
+  {
+    id: 'pattern_have_to', topic: 'work', title: 'Saying what you have to do', subtitle: 'A practical daily frame', grammar: ['modal_infinitive'],
+    template: 'Muszę {action}.',
+    translationTemplates: { nl: 'Ik moet {action}.', en: 'I have to {action}.' },
+    default: { action: 'jutro pracować' },
+    slots: {
+      action: [
+        { value: 'jutro pracować', nl: 'morgen werken', en: 'work tomorrow' },
+        { value: 'wcześnie wstać', nl: 'vroeg opstaan', en: 'get up early' },
+        { value: 'zadzwonić do domu', nl: 'naar huis bellen', en: 'call home' },
+        { value: 'kupić prezent', nl: 'een cadeau kopen', en: 'buy a present' },
+        { value: 'więcej ćwiczyć', nl: 'meer oefenen', en: 'practise more' },
+      ],
+    },
+    noteNl: 'Na muszę volgt de infinitief. Leer muszę + handeling als één spreekblok.',
+    noteEn: 'Muszę is followed by an infinitive. Learn muszę + action as one speaking block.',
+  },
+  {
+    id: 'pattern_future_plan', topic: 'holidays', title: 'Talking about plans', subtitle: 'What you will do together', grammar: ['polite_future'],
+    template: 'W weekend będziemy {plan}.',
+    translationTemplates: { nl: 'In het weekend gaan we {plan}.', en: 'At the weekend we will {plan}.' },
+    default: { plan: 'odpoczywać' },
+    slots: {
+      plan: [
+        { value: 'odpoczywać', nl: 'uitrusten', en: 'rest' },
+        { value: 'gotować razem', nl: 'samen koken', en: 'cook together' },
+        { value: 'odwiedzać rodzinę', nl: 'familie bezoeken', en: 'visit family' },
+        { value: 'jeździć na motocyklu', nl: 'motorrijden', en: 'ride the motorcycle' },
+        { value: 'spacerować po mieście', nl: 'door de stad wandelen', en: 'walk around the city' },
+      ],
+    },
+    noteNl: 'Będziemy + infinitief maakt een toekomstige activiteit met “wij”.',
+    noteEn: 'Będziemy + infinitive expresses a future activity with “we”.',
+  },
+  {
+    id: 'pattern_yesterday', topic: 'family', title: 'Talking about yesterday', subtitle: 'A ready-made past-time opener', grammar: ['past_tense','gender'],
+    template: 'Wczoraj {past}.',
+    translationTemplates: { nl: 'Gisteren {past}.', en: 'Yesterday I {past}.' },
+    default: { past: 'dużo pracowałem' },
+    slots: {
+      past: [
+        { value: 'dużo pracowałem', nl: 'heb ik veel gewerkt', en: 'worked a lot' },
+        { value: 'byłem w domu', nl: 'was ik thuis', en: 'was at home' },
+        { value: 'spotkałem się z przyjaciółmi', nl: 'heb ik vrienden ontmoet', en: 'met friends' },
+        { value: 'oglądałem wyścig', nl: 'heb ik een race gekeken', en: 'watched a race' },
+        { value: 'odpoczywałem', nl: 'heb ik uitgerust', en: 'rested' },
+      ],
+    },
+    noteNl: 'Deze voorbeelden gebruiken de mannelijke verleden tijd: -łem. Een vrouwelijke spreker gebruikt meestal -łam.',
+    noteEn: 'These examples use the male-speaker past ending -łem. A female speaker usually uses -łam.',
+  },
+  {
+    id: 'pattern_think_that', topic: 'questions', title: 'Sharing an opinion', subtitle: 'A safe way to add more detail', grammar: [],
+    template: 'Myślę, że {opinion}.',
+    translationTemplates: { nl: 'Ik denk dat {opinion}.', en: 'I think that {opinion}.' },
+    default: { opinion: 'to dobry pomysł' },
+    slots: {
+      opinion: [
+        { value: 'to dobry pomysł', nl: 'dit een goed idee is', en: 'it is a good idea' },
+        { value: 'jutro będzie cieplej', nl: 'het morgen warmer wordt', en: 'it will be warmer tomorrow' },
+        { value: 'jedzenie jest bardzo dobre', nl: 'het eten erg lekker is', en: 'the food is very good' },
+        { value: 'powinniśmy jechać wcześniej', nl: 'we eerder moeten vertrekken', en: 'we should leave earlier' },
+        { value: 'Polska jest piękna', nl: 'Polen mooi is', en: 'Poland is beautiful' },
+      ],
+    },
+    noteNl: 'Myślę, że is een herbruikbare opener. Na że volgt gewoon een volledige mededeling.',
+    noteEn: 'Myślę, że is a reusable opener. A complete statement follows że.',
+  },
+  {
+    id: 'pattern_dont_understand', topic: 'questions', title: 'Explaining what you missed', subtitle: 'Keep the conversation in Polish', grammar: ['negation','case_genitive'],
+    template: 'Nie rozumiem {thing}.',
+    translationTemplates: { nl: 'Ik begrijp {thing} niet.', en: "I don't understand {thing}." },
+    default: { thing: 'tego słowa' },
+    slots: {
+      thing: [
+        { value: 'tego słowa', nl: 'dit woord', en: 'this word' },
+        { value: 'pytania', nl: 'de vraag', en: 'the question' },
+        { value: 'ostatniego zdania', nl: 'de laatste zin', en: 'the last sentence' },
+        { value: 'wszystkiego', nl: 'alles', en: 'everything' },
+        { value: 'tego, co powiedziałeś', nl: 'wat je zei', en: 'what you said' },
+      ],
+    },
+    noteNl: 'Een concrete aanvulling maakt “nie rozumiem” veel bruikbaarder en helpt de ander gericht te herhalen.',
+    noteEn: 'Adding the specific thing you missed makes nie rozumiem more useful and helps the other person repair the conversation.',
+  },
+  {
+    id: 'pattern_how_long', topic: 'visiting', title: 'Asking how long', subtitle: 'Time and duration questions', grammar: ['question_words'],
+    template: 'Jak długo {activity}?',
+    translationTemplates: { nl: 'Hoe lang {activity}?', en: 'How long {activity}?' },
+    default: { activity: 'zostajecie w Polsce' },
+    slots: {
+      activity: [
+        { value: 'zostajecie w Polsce', nl: 'blijven jullie in Polen', en: 'are you staying in Poland' },
+        { value: 'trwa podróż', nl: 'duurt de reis', en: 'does the journey take' },
+        { value: 'pracujesz tutaj', nl: 'werk je hier', en: 'have you worked here' },
+        { value: 'uczysz się polskiego', nl: 'leer je al Pools', en: 'have you been learning Polish' },
+        { value: 'będziecie u rodziny', nl: 'zijn jullie bij de familie', en: 'will you be with the family' },
+      ],
+    },
+    noteNl: 'Jak długo staat aan het begin; daarna volgt de normale werkwoordsvorm voor de persoon waarover je vraagt.',
+    noteEn: 'Jak długo comes first; the normal verb form for the person you are asking about follows.',
+  },
+  {
+    id: 'pattern_opinion_question', topic: 'hobbies', title: 'Asking someone’s opinion', subtitle: 'A natural follow-up question', grammar: ['case_locative'],
+    template: 'Co sądzisz o {topicItem}?',
+    translationTemplates: { nl: 'Wat vind je van {topicItem}?', en: 'What do you think about {topicItem}?' },
+    default: { topicItem: 'tym pomyśle' },
+    slots: {
+      topicItem: [
+        { value: 'tym pomyśle', nl: 'dit idee', en: 'this idea' },
+        { value: 'tym filmie', nl: 'deze film', en: 'this film' },
+        { value: 'wyścigu', nl: 'de race', en: 'the race' },
+        { value: 'naszym planie', nl: 'ons plan', en: 'our plan' },
+        { value: 'polskiej kuchni', nl: 'de Poolse keuken', en: 'Polish cuisine' },
+      ],
+    },
+    noteNl: 'Na o staat het onderwerp hier in de locatief. Leer daarom de hele vraag met een paar vaste onderwerpen.',
+    noteEn: 'The topic after o is locative here. Learn the complete question with several ready-made topics.',
+  },
+  {
+    id: 'pattern_repeat', topic: 'questions', title: 'Asking for repair', subtitle: 'Control the speed of the conversation', grammar: ['modal_infinitive'],
+    template: 'Czy możesz {request}?',
+    translationTemplates: { nl: 'Kun je {request}?', en: 'Can you {request}?' },
+    default: { request: 'powtórzyć' },
+    slots: {
+      request: [
+        { value: 'powtórzyć', nl: 'dat herhalen', en: 'repeat that' },
+        { value: 'mówić trochę wolniej', nl: 'iets langzamer praten', en: 'speak a little more slowly' },
+        { value: 'napisać to', nl: 'dat opschrijven', en: 'write that down' },
+        { value: 'wyjaśnić to inaczej', nl: 'het anders uitleggen', en: 'explain it differently' },
+        { value: 'podać przykład', nl: 'een voorbeeld geven', en: 'give an example' },
+      ],
+    },
+    noteNl: 'Czy możesz + infinitief is informeel en vriendelijk. Tegen een onbekende kun je het beleefder maken met czy może pan/pani.',
+    noteEn: 'Czy możesz + infinitive is friendly and informal. With a stranger, czy może pan/pani is more polite.',
+  },
+
 ];
 
 export const REAL_LIFE_SCENARIOS = [

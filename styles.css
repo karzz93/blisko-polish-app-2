@@ -5135,7 +5135,7 @@ body.session-keyboard-open .session-footer-inner.pre-answer .ghost-button {
 .startup-repair-card { max-width: 620px; margin: clamp(24px, 8vh, 88px) auto; padding: clamp(24px, 5vw, 42px); }
 .startup-repair-card h2 { margin: 8px 0 12px; }
 .startup-repair-card .primary-button { margin-top: 10px; }
-.startup-error-detail { padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; overflow-wrap: anywhere; opacity: .78; }
+.startup-error-detail { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; overflow-wrap: anywhere; opacity: .78; }
 
 /* v1.3.0 — Trust, measurement, and verified updates */
 
@@ -6295,4 +6295,79 @@ body.session-keyboard-open .session-footer-inner.pre-answer .ghost-button {
   .conversation-intentions {
     padding-inline: 10px;
   }
+}
+
+
+/* Blisko 1.7 — error notebook and adaptive pattern workouts */
+.mistake-notebook-card { padding: 24px; }
+.mistake-notebook-heading { align-items: flex-end; gap: 18px; }
+.mistake-notebook-heading > div:first-child { max-width: 760px; }
+.mistake-notebook-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+.mistake-entry {
+  display: flex;
+  min-height: 178px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel-muted) 88%, var(--coral-soft));
+}
+.mistake-entry-head,
+.mistake-entry-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mistake-entry-head { color: var(--muted); font-size: 11px; font-weight: 750; }
+.mistake-type {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--coral-soft);
+  color: var(--coral);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-size: 9px;
+}
+.mistake-entry > strong { margin-top: 2px; font-size: 20px; }
+.mistake-entry > p { margin: 0; color: var(--muted); }
+.mistake-entry > small { color: var(--muted); line-height: 1.45; }
+.mistake-entry-foot { margin-top: auto; padding-top: 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+.compact-empty { min-height: 170px; }
+.adaptive-target-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 13px;
+  margin: 12px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line));
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--blue-soft) 68%, transparent);
+}
+.adaptive-target-note > span:last-child { display: grid; gap: 3px; }
+.adaptive-target-note strong { color: var(--blue); font-size: 11px; text-transform: uppercase; letter-spacing: .045em; }
+.adaptive-target-note small { color: var(--muted); line-height: 1.4; }
+.pattern-list button { position: relative; padding-right: 48px; }
+.pattern-list button small {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+.pattern-list button.active small { color: currentColor; opacity: .72; }
+@media (max-width: 720px) {
+  .mistake-notebook-card { padding: 18px; }
+  .mistake-notebook-heading { align-items: stretch; }
+  .mistake-notebook-heading .primary-button { width: 100%; }
+  .mistake-notebook-grid { grid-template-columns: 1fr; }
 }

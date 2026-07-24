@@ -1,4 +1,4 @@
-const BUILD = '1.6';
+const BUILD = '1.7';
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
 const SCOPE_KEY = SCOPE_PATH
   .replace(/^\/+|\/+$/g, '')

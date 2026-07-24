@@ -1,10 +1,13 @@
-BLISKO 1.6 - VOCABULARY EXPANSION
+BLISKO 1.7 - ADAPTIVE PRACTICE AND PATTERN WORKOUTS
 
-Upload every file and folder from this directory to the same GitHub Pages branch/folder that currently hosts Blisko. Replace the existing files rather than adding a second app folder.
+Upload every file in this folder together. Do not mix files from older builds.
+The app preserves learner progress in browser storage and creates a safety copy before migration.
 
-Important:
-- Keep the filenames unchanged.
-- Upload index.html, app.js, data.js, engine.js, tutor.js, polish.js, storage.js, styles.css, sw.js, manifest.webmanifest, BUILD.txt, and all icons together.
-- Existing progress is stored locally and remains compatible with this update.
+Version 1.7 adds:
+- recurring-error tracking and a personal Error Notebook;
+- a generated Fix my mistakes session;
+- 14 reusable sentence patterns and a seven-pattern adaptive workout;
+- schema 7 migration from existing review history;
+- all vocabulary, family-profile, conversation, and smooth-interaction improvements from versions 1.4.2 through 1.6.
 
-After deployment, open the hosted app once while online. The service worker will install the verified 1.6 shell and perform one controlled restart if needed.
+After deployment, open the hosted app once while online. The service worker will install the verified 1.7 shell and perform one controlled restart if needed.

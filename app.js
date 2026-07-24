@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.6';
+} from './data.js?v=1.7';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.6';
+} from './storage.js?v=1.7';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -40,6 +40,7 @@ import {
   getDueItems,
   getReviewQueue,
   getWeakItems,
+  getErrorNotebook,
   getTopicReadiness,
   getScenarioReadiness,
   getPersonaReadiness,
@@ -65,8 +66,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.6';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.6';
+} from './engine.js?v=1.7';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.7';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -75,7 +76,7 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.6';
+} from './polish.js?v=1.7';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -1281,6 +1282,12 @@ function renderLearn() {
             <p>Train a balanced mix of due, weak, and new family-first words without repeating only the basics.</p>
             <span class="focus-footer"><span>12 words · ${WORDS.length} available</span><b>Build vocabulary ${icon('arrow')}</b></span>
           </button>
+          <button class="card focus-card" type="button" data-action="start-pattern-workout" style="--focus:var(--green);--focus-soft:var(--green-soft)">
+            <span class="focus-icon">${icon('brain')}</span>
+            <h3>Sentence pattern workout</h3>
+            <p>Rotate through reusable frames and move from recognition to building and typing them independently.</p>
+            <span class="focus-footer"><span>7 patterns · ${PATTERNS.length} available</span><b>Train patterns ${icon('arrow')}</b></span>
+          </button>
           <button class="card focus-card" type="button" data-action="start-rescue-session" style="--focus:var(--coral);--focus-soft:var(--coral-soft)">
             <span class="focus-icon">${icon('help')}</span>
             <h3>Conversation rescue kit</h3>
@@ -1327,7 +1334,8 @@ function renderLearn() {
           <div><h2>Sentence pattern lab</h2><p>Swap one part at a time and feel the structure before learning the label.</p></div>
           <div class="button-row">
             <button class="text-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}">Listen ${icon('volume')}</button>
-            <button class="secondary-button compact" type="button" data-action="practice-pattern" data-pattern="${pattern.id}">${icon('lightbulb')} Practise with hints</button>
+            <button class="secondary-button compact" type="button" data-action="start-pattern-workout">${icon('repeat')} Pattern workout</button>
+            <button class="secondary-button compact" type="button" data-action="practice-pattern" data-pattern="${pattern.id}">${icon('lightbulb')} Practise this pattern</button>
           </div>
         </div>
         <article class="card pattern-lab">
@@ -1336,6 +1344,7 @@ function renderLearn() {
               <button class="${entry.id === pattern.id ? 'active' : ''}" type="button" data-action="select-pattern" data-pattern="${entry.id}">
                 <strong>${escapeHtml(entry.title)}</strong>
                 <span>${escapeHtml(entry.subtitle)}</span>
+                <small>${state.progress.patterns?.[entry.id]?.reviews ? `${Math.round((state.progress.patterns[entry.id].confidence || 0) * 100)}%` : 'new'}</small>
               </button>
             `).join('')}
           </div>
@@ -1404,6 +1413,7 @@ function renderReview() {
   const due = getDueItems(state);
   const weak = getWeakItems(state, 4);
   const queue = getReviewQueue(state, 9);
+  const errorNotebook = getErrorNotebook(state, 8);
   const metrics = getMetrics(state);
   const nextDue = queue.find((entry) => entry.progress && !entry.due);
 
@@ -1449,6 +1459,28 @@ function renderReview() {
         </article>
       </section>
 
+      <section class="card mistake-notebook-card">
+        <div class="section-heading mistake-notebook-heading">
+          <div>
+            <p class="eyebrow">PERSONAL ERROR NOTEBOOK</p>
+            <h2>${errorNotebook.length ? `${errorNotebook.length} recurring friction points are active.` : 'No recurring mistake pattern yet.'}</h2>
+            <p>Blisko separates endings, spelling, missing words, word order, and hint dependence so the next exercise attacks the actual problem.</p>
+          </div>
+          <button class="primary-button" type="button" data-action="start-error-session" ${errorNotebook.length ? '' : 'disabled'}>${icon('target')} Fix my mistakes</button>
+        </div>
+        ${errorNotebook.length ? `<div class="mistake-notebook-grid">
+          ${errorNotebook.map((entry) => `
+            <article class="mistake-entry">
+              <div class="mistake-entry-head"><span class="mistake-type">${escapeHtml(entry.label)}</span><span>${entry.count}×</span></div>
+              <strong lang="pl">${escapeHtml(entry.item.pl)}</strong>
+              <p>${escapeHtml(primaryTranslation(entry.item))}</p>
+              <small>${escapeHtml(entry.focus)}</small>
+              <div class="mistake-entry-foot"><span>${Math.round(entry.progress.confidence * 100)}% confidence</span><span>${entry.lastAt ? formatDateRelative(entry.lastAt) : 'recent'}</span></div>
+            </article>
+          `).join('')}
+        </div>` : `<div class="empty-state compact-empty"><span class="empty-state-icon">${icon('check')}</span><h3>Keep practising naturally</h3><p>Once the same type of friction appears more than once, it will be collected here automatically.</p></div>`}
+      </section>
+
       <section class="card queue-card">
         <div class="section-heading">
           <div><h2>Adaptive queue</h2><p>Ordered by due date, memory weakness, frequency, and conversation value.</p></div>
@@ -1482,6 +1514,8 @@ function renderReview() {
 }
 
 const FAMILY_PERSONA_IDS = new Set(['mother-in-law', 'father-in-law', 'grandmother']);
+const FAMILY_CONVERSATION_SCRIPT_VERSION = 'family-1.5';
+const COMPATIBLE_FAMILY_SCRIPT_VERSIONS = new Set(['1.5', '1.6', FAMILY_CONVERSATION_SCRIPT_VERSION]);
 
 const familyProfileFor = (personaOrId) => {
   const personaId = typeof personaOrId === 'string' ? personaOrId : personaOrId?.id;
@@ -1541,13 +1575,13 @@ const ensureConversationState = (personaId) => {
   const conversation = CONVERSATIONS[personaId];
   if (!conversation) return null;
   const existingTranscript = state.conversation.transcripts[personaId];
-  if (existingTranscript && FAMILY_PERSONA_IDS.has(personaId) && existingTranscript.scriptVersion !== APP_VERSION) {
+  if (existingTranscript && FAMILY_PERSONA_IDS.has(personaId) && !COMPATIBLE_FAMILY_SCRIPT_VERSIONS.has(existingTranscript.scriptVersion)) {
     delete state.conversation.transcripts[personaId];
   }
   if (!state.conversation.transcripts[personaId]) {
     const firstTurn = conversation.turns[0];
     state.conversation.transcripts[personaId] = {
-      scriptVersion: APP_VERSION,
+      scriptVersion: FAMILY_PERSONA_IDS.has(personaId) ? FAMILY_CONVERSATION_SCRIPT_VERSION : APP_VERSION,
       turnIndex: 0,
       completed: false,
       hintsByTurn: {},
@@ -2483,9 +2517,7 @@ const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8
   renderSession();
 };
 
-const startPatternChallenge = (patternId = selectedPatternId) => {
-  const pattern = PATTERNS.find((entry) => entry.id === patternId) || PATTERNS[0];
-  const selections = patternSelections[pattern.id] || pattern.default;
+const buildPatternExercise = (pattern, selections, index = 0, { workout = false } = {}) => {
   const answer = getPatternSentence(pattern, selections);
   const cleanAnswer = answer.replace(/[.!?]+$/g, '');
   const translationNl = getPatternTranslation(pattern, selections, 'nl');
@@ -2493,10 +2525,9 @@ const startPatternChallenge = (patternId = selectedPatternId) => {
   const primary = primaryLanguage() === 'nl' ? translationNl : translationEn;
   const secondary = primaryLanguage() === 'nl' ? translationEn : translationNl;
   const tokens = cleanAnswer.split(/\s+/).filter(Boolean)
-    .map((value, index) => ({ id: `${pattern.id}-${index}-${value}`, value }));
+    .map((value, tokenIndex) => ({ id: `${pattern.id}-${index}-${tokenIndex}-${value}`, value }));
   const patternProgress = state.progress.patterns?.[pattern.id] || null;
   const adaptiveSupportLevel = getAdaptiveSupportLevel(patternProgress);
-  const baseExerciseType = tokens.length >= 3 ? 'ordering' : 'typing';
 
   const alternatives = [];
   Object.entries(pattern.slots || {}).forEach(([slotId, options]) => {
@@ -2507,12 +2538,31 @@ const startPatternChallenge = (patternId = selectedPatternId) => {
     });
   });
 
+  const reviews = Number(patternProgress?.reviews || 0);
+  const confidence = Number(patternProgress?.confidence || 0);
+  let baseExerciseType = tokens.length >= 3 ? 'ordering' : 'typing';
+  let adaptiveTargetReason = '';
+  if (workout) {
+    if (!reviews && alternatives.length >= 2) {
+      baseExerciseType = 'choice';
+      adaptiveTargetReason = 'This pattern is new, so Blisko starts with recognition before asking you to build it.';
+    } else if (confidence < 0.48) {
+      baseExerciseType = tokens.length >= 3 ? 'ordering' : 'typing';
+      adaptiveTargetReason = 'This pattern is still fragile, so you will rebuild the complete speaking block.';
+    } else {
+      baseExerciseType = index % 3 === 2 ? 'typing' : index % 3 === 1 && alternatives.length >= 2 ? 'choice' : 'ordering';
+      adaptiveTargetReason = baseExerciseType === 'typing'
+        ? 'This pattern is ready for free production.'
+        : 'The workout is varying the retrieval route so you can use the frame flexibly.';
+    }
+  }
+
   let exerciseType = baseExerciseType;
-  if (adaptiveSupportLevel >= 2 && alternatives.length >= 2) exerciseType = 'choice';
+  if (adaptiveSupportLevel >= 2 && ['typing','ordering'].includes(baseExerciseType) && alternatives.length >= 2) exerciseType = 'choice';
   else if (adaptiveSupportLevel >= 1 && baseExerciseType === 'typing' && tokens.length >= 2) exerciseType = 'ordering';
 
-  const exercise = {
-    id: `${pattern.id}-${Date.now()}`,
+  return {
+    id: `${pattern.id}-${Date.now()}-${index}`,
     itemId: null,
     itemType: 'pattern',
     patternId: pattern.id,
@@ -2532,29 +2582,59 @@ const startPatternChallenge = (patternId = selectedPatternId) => {
     originalExerciseType: baseExerciseType,
     adaptiveSupportLevel,
     adaptiveSupportAdjusted: exerciseType !== baseExerciseType,
-    adaptiveSupportReason: exerciseType === 'choice'
+    adaptiveTargetReason,
+    adaptiveSupportReason: exerciseType === 'choice' && baseExerciseType !== 'choice'
       ? 'Repeated hint use changed free recall into recognition.'
       : exerciseType !== baseExerciseType
         ? 'Repeated hint use changed typing into word selection.'
         : '',
     direction: 'meaning-to-pl',
     answerKind: 'polish',
-    skill: exerciseType === 'choice' ? 'Guided pattern recall' : 'Pattern practice',
-    instruction: exerciseType === 'choice' ? 'Choose the reusable pattern' : 'Build the reusable pattern',
+    skill: exerciseType === 'choice' ? 'Pattern recognition' : exerciseType === 'ordering' ? 'Guided pattern recall' : 'Free pattern production',
+    skillKey: exerciseType === 'choice' || exerciseType === 'ordering' ? 'guidedProduction' : 'freeProduction',
+    instruction: exerciseType === 'choice' ? 'Choose the reusable pattern' : exerciseType === 'ordering' ? 'Build the reusable pattern' : 'Write the reusable pattern',
     mainText: primary,
     subText: secondary,
     answer: cleanAnswer,
-    tokens: shuffle(tokens, `${pattern.id}-${Date.now()}`),
+    tokens: shuffle(tokens, `${pattern.id}-${index}-${Date.now()}`),
     options: exerciseType === 'choice'
-      ? shuffle([cleanAnswer, ...alternatives.slice(0, 2)], `${pattern.id}-adaptive-choice-${Date.now()}`)
+      ? shuffle([cleanAnswer, ...alternatives.slice(0, 3)], `${pattern.id}-adaptive-choice-${index}-${Date.now()}`)
       : undefined,
     audioText: answer,
   };
+};
+
+const startPatternChallenge = (patternId = selectedPatternId) => {
+  const pattern = PATTERNS.find((entry) => entry.id === patternId) || PATTERNS[0];
+  const selections = patternSelections[pattern.id] || pattern.default;
   startSession({
     mode: 'pattern',
     title: `${pattern.title} · guided challenge`,
-    customExercises: [exercise],
+    customExercises: [buildPatternExercise(pattern, selections)],
   });
+};
+
+const workoutSelectionsFor = (pattern, index) => Object.fromEntries(
+  Object.entries(pattern.slots || {}).map(([slotId, options], slotIndex) => {
+    const values = options || [];
+    const selected = values.length ? values[(index + slotIndex + 1) % values.length].value : pattern.default?.[slotId];
+    return [slotId, selected];
+  }),
+);
+
+const startPatternWorkout = (length = 7) => {
+  const ranked = PATTERNS
+    .map((pattern) => {
+      const progress = state.progress.patterns?.[pattern.id];
+      const unseen = progress ? 0 : 100;
+      const weakness = progress ? (1 - Number(progress.confidence || 0)) * 75 : 0;
+      const staleness = progress?.lastSeenAt ? Math.min(25, (Date.now() - new Date(progress.lastSeenAt).getTime()) / 86_400_000) : 20;
+      return { pattern, score: unseen + weakness + staleness };
+    })
+    .sort((left, right) => right.score - left.score)
+    .slice(0, Math.min(length, PATTERNS.length));
+  const exercises = ranked.map(({ pattern }, index) => buildPatternExercise(pattern, workoutSelectionsFor(pattern, index), index, { workout: true }));
+  startSession({ mode: 'pattern-workout', title: 'Sentence pattern workout', customExercises: exercises });
 };
 
 
@@ -3078,6 +3158,13 @@ const renderExercise = (exercise) => {
     `;
   }
 
+  const adaptiveTargetNote = exercise.adaptiveTargetReason ? `
+    <div class="adaptive-target-note">
+      <span class="adaptive-scaffold-icon">${icon('target')}</span>
+      <span><strong>Why this exercise now</strong><small>${escapeHtml(exercise.adaptiveTargetReason)}</small></span>
+    </div>
+  ` : '';
+
   const adaptiveSupportNote = exercise.adaptiveSupportAdjusted ? `
     <div class="adaptive-scaffold-note level-${Number(exercise.adaptiveSupportLevel || 1)}">
       <span class="adaptive-scaffold-icon">${icon('sparkles')}</span>
@@ -3092,6 +3179,7 @@ const renderExercise = (exercise) => {
   return `
     <article class="exercise-card">
       <div class="exercise-eyebrow"><span>${escapeHtml(exercise.instruction)}</span><span class="exercise-skill">${escapeHtml(exercise.skill)}</span></div>
+      ${adaptiveTargetNote}
       ${adaptiveSupportNote}
       <p class="exercise-prompt">${exercise.type === 'listening' ? 'Catch the message, not every sound.' : exercise.type === 'speaking' ? 'Read once, then look away if you can.' : 'Use the whole phrase as a speaking block.'}</p>
       <div class="exercise-main-text" ${((exercise.answerKind === 'meaning' && exercise.type !== 'listening') || exercise.type === 'speaking') ? 'lang="pl"' : ''}>${mainTextMarkup}</div>
@@ -3441,6 +3529,8 @@ const rateCurrentExercise = (rating, confidenceState = null) => {
     originalExerciseType: exercise.originalExerciseType || null,
     skillKey: getExerciseSkill(exercise),
     errorType: result.errorType || null,
+    targetErrorType: exercise.targetErrorType || null,
+    adaptiveTargetReason: exercise.adaptiveTargetReason || null,
     source: session.mode === 'review' ? 'review session' : 'smart session',
   };
   if (exercise.itemId) reviewItem(state, exercise.itemId, rating, reviewEvidence);
@@ -4761,6 +4851,18 @@ const handleAction = (event) => {
         title: 'Vocabulary boost',
       });
       break;
+    case 'start-pattern-workout':
+      startPatternWorkout();
+      break;
+    case 'start-error-session': {
+      const notebook = getErrorNotebook(state, 10);
+      if (!notebook.length) {
+        showToast('No recurring mistakes yet', 'Complete a few productive exercises and Blisko will build this session automatically.', 'check');
+        break;
+      }
+      startSession({ mode: 'mistakes', itemIds: notebook.map((entry) => entry.item.id), title: 'Fix my mistakes' });
+      break;
+    }
     case 'start-rescue-session':
       startSession({
         mode: 'review',

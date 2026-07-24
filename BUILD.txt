@@ -1,9 +1,8 @@
-Blisko 1.7 adaptive practice and sentence-pattern expansion
+Blisko 1.8 single-language explanations
 Includes the 1.4.2 smooth-interaction fix: lesson answers and word tiles do not rebuild the full-screen lesson modal
 Preserves the 1.5 editable family profiles and branching family conversations
 Preserves the 1.6 corpus of 250 practical words and 82 contextual phrases
-Adds an error-aware learner model that distinguishes endings, spelling, word order, missing words, retrieval gaps, and hint dependence
-Adds a personal Error Notebook and a Fix my mistakes session generated from recurring friction
-Expands the Sentence Pattern Lab from 5 to 14 reusable frames
-Adds a seven-pattern workout that progresses from recognition to word ordering and free production
-Migrates existing review history into schema 7 without deleting progress, family profiles, or conversations
+Preserves the 1.7 error-aware learner model, Error Notebook, Fix my mistakes sessions, and 14 sentence patterns
+Adds a persistent Dutch/English flag switch in the top-right corner
+Shows translations, hints, tutor replies, grammar notes, feedback, word details, and sentence-pattern explanations in one selected language only
+Migrates legacy language settings into schema 8 without deleting progress, profiles, conversations, or review history

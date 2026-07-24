@@ -8,10 +8,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Blisko — Polish for family</title>
-  <link rel="manifest" href="./manifest.webmanifest?v=1.7" />
-  <link rel="icon" href="./icon.svg?v=1.7" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="./icon-192.png?v=1.7" />
-  <link rel="stylesheet" href="./styles.css?v=1.7" />
+  <link rel="manifest" href="./manifest.webmanifest?v=1.8" />
+  <link rel="icon" href="./icon.svg?v=1.8" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-192.png?v=1.8" />
+  <link rel="stylesheet" href="./styles.css?v=1.8" />
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -74,6 +74,10 @@
             <span class="streak-flame">◒</span>
             <strong id="streak-count">0</strong>
           </button>
+          <button class="language-flag-button" id="language-button" type="button" data-action="toggle-language" aria-label="Switch explanations to English" title="Switch explanations to English">
+            <span class="language-flag" id="language-flag" aria-hidden="true">🇳🇱</span>
+            <strong id="language-code">NL</strong>
+          </button>
           <button class="icon-button mobile-settings-button" type="button" data-action="open-settings" aria-label="Open coach settings" title="Coach settings">
             <span data-icon="settings"></span>
           </button>
@@ -98,7 +102,7 @@
 
   <script>
     (() => {
-      const BUILD = '1.7';
+      const BUILD = '1.8';
       const cleanText = (value) => String(value || '').replace(/[<>&"']/g, '').slice(0, 240);
       const showStartupRepair = (detail = '') => {
         if (document.documentElement.dataset.bliskoReady === 'true') return;
@@ -153,6 +157,6 @@
     })();
   </script>
 
-  <script type="module" src="./app.js?v=1.7"></script>
+  <script type="module" src="./app.js?v=1.8"></script>
 </body>
 </html>

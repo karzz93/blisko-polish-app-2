@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.7';
+} from './data.js?v=1.8';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.7';
+} from './storage.js?v=1.8';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -66,8 +66,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.7';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.7';
+} from './engine.js?v=1.8';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.8';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -76,7 +76,7 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.7';
+} from './polish.js?v=1.8';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -196,16 +196,19 @@ const PAGE_META = {
   learn: ['PERSONAL PATH', 'Learn'],
   review: ['MEMORY ENGINE', 'Review'],
   talk: ['FLAGSHIP MODE', 'Talk'],
-  tutor: ['BILINGUAL COACH', 'Tutor'],
+  tutor: ['LANGUAGE COACH', 'Tutor'],
   games: ['QUICK PRACTICE', 'Mini games'],
   progress: ['REAL-WORLD PROGRESS', 'Progress'],
   library: ['YOUR POLISH', 'Word library'],
 };
 
-const primaryLanguage = () => state.settings.showDutch ? 'nl' : 'en';
-const secondaryLanguage = () => primaryLanguage() === 'nl' ? 'en' : 'nl';
+const explanationLanguage = () => state?.settings?.explanationLanguage === 'en' ? 'en' : 'nl';
+const primaryLanguage = () => explanationLanguage();
 const primaryTranslation = (item) => item?.[primaryLanguage()] || item?.nl || item?.en || '';
-const secondaryTranslation = (item) => item?.[secondaryLanguage()] || '';
+const secondaryTranslation = () => '';
+const explanationText = (en = '', nl = '') => explanationLanguage() === 'nl' ? (nl || en || '') : (en || nl || '');
+const explanationCode = () => explanationLanguage() === 'nl' ? 'NL' : 'EN';
+const explanationFlag = () => explanationLanguage() === 'nl' ? '🇳🇱' : '🇬🇧';
 
 
 const evaluationContextFor = (exercise = {}) => ({
@@ -409,6 +412,18 @@ const updateShell = () => {
   document.querySelector('.profile-avatar').textContent = (state.profile.name || 'K').trim().charAt(0).toUpperCase();
   document.querySelector('.profile-copy strong').textContent = state.profile.name || 'Kars';
 
+  const languageButton = document.getElementById('language-button');
+  const languageFlag = document.getElementById('language-flag');
+  const languageCode = document.getElementById('language-code');
+  const switchTarget = explanationLanguage() === 'nl' ? 'English' : 'Dutch';
+  if (languageFlag) languageFlag.textContent = explanationFlag();
+  if (languageCode) languageCode.textContent = explanationCode();
+  if (languageButton) {
+    languageButton.setAttribute('aria-label', `Switch explanations to ${switchTarget}`);
+    languageButton.title = `Switch explanations to ${switchTarget}`;
+  }
+  document.documentElement.dataset.explanationLanguage = explanationLanguage();
+
   const goal = Math.max(5, state.profile.dailyGoal || 15);
   const today = Math.round(state.stats.minutesToday || 0);
   document.getElementById('sidebar-goal-label').textContent = `${today} / ${goal} min`;
@@ -421,6 +436,23 @@ const updateShell = () => {
 
   renderNavigation();
   updateConnectionStatus();
+};
+
+const setExplanationLanguage = (language, { announce = true } = {}) => {
+  const normalized = language === 'en' ? 'en' : 'nl';
+  state.settings.explanationLanguage = normalized;
+  state.settings.showDutch = normalized === 'nl';
+  state.settings.showEnglish = normalized === 'en';
+  save();
+  updateShell();
+  renderView();
+  if (announce) {
+    showToast(
+      normalized === 'nl' ? 'Nederlands geselecteerd' : 'English selected',
+      normalized === 'nl' ? 'Vertalingen en uitleg worden nu alleen in het Nederlands getoond.' : 'Translations and explanations are now shown only in English.',
+      'flag',
+    );
+  }
 };
 
 const navigate = (view, { replace = false } = {}) => {
@@ -505,13 +537,11 @@ const renderMorphologyOverlay = () => {
           <section class="morph-grid">
             <article class="morph-card primary">
               <span class="morph-card-label">WHAT IT MEANS HERE</span>
-              <h3>${escapeHtml(selected.meaningEn || 'Meaning depends on context')}</h3>
-              ${state.settings.showDutch ? `<p lang="nl"><strong>NL</strong> ${escapeHtml(selected.meaningNl || '')}</p>` : ''}
+              <h3>${escapeHtml(explanationText(selected.meaningEn || 'Meaning depends on context', selected.meaningNl || 'Betekenis hangt af van de context'))}</h3>
             </article>
             <article class="morph-card">
               <span class="morph-card-label">WHY THIS FORM WORKS</span>
-              <p>${escapeHtml(selected.whyEn || '')}</p>
-              ${state.settings.showDutch ? `<p class="morph-secondary" lang="nl">${escapeHtml(selected.whyNl || '')}</p>` : ''}
+              <p>${escapeHtml(explanationText(selected.whyEn || '', selected.whyNl || ''))}</p>
             </article>
           </section>
 
@@ -519,8 +549,7 @@ const renderMorphologyOverlay = () => {
             <div>
               <span class="morph-card-label">LISTENING ANCHOR</span>
               <h3>${escapeHtml(selected.pronunciation?.approximate || selected.token)}</h3>
-              <p>${escapeHtml(selected.pronunciation?.cautionEn || '')}</p>
-              ${state.settings.showDutch ? `<small lang="nl">${escapeHtml(selected.pronunciation?.cautionNl || '')}</small>` : ''}
+              <p>${escapeHtml(explanationText(selected.pronunciation?.cautionEn || '', selected.pronunciation?.cautionNl || ''))}</p>
             </div>
             <div class="morph-audio-actions">
               <button class="secondary-button compact" type="button" data-action="morphology-listen-word">${icon('volume')} Word</button>
@@ -528,7 +557,7 @@ const renderMorphologyOverlay = () => {
             </div>
           </section>
 
-          ${pronunciationNotes.length ? `<div class="morph-note-list">${pronunciationNotes.map((note) => `<div><span>${icon('volume')}</span><p>${escapeHtml(note.en)}${state.settings.showDutch ? `<small lang="nl">${escapeHtml(note.nl)}</small>` : ''}</p></div>`).join('')}</div>` : ''}
+          ${pronunciationNotes.length ? `<div class="morph-note-list">${pronunciationNotes.map((note) => `<div><span>${icon('volume')}</span><p>${escapeHtml(explanationText(note.en, note.nl))}</p></div>`).join('')}</div>` : ''}
 
           ${selected.related?.length ? `<section class="morph-related"><span class="morph-card-label">RELATED FORMS</span><div>${selected.related.map((form) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(form)}" data-sentence="${escapeHtml(form)}">${escapeHtml(form)}</button>`).join('')}</div></section>` : ''}
 
@@ -696,10 +725,10 @@ const renderListeningResult = (item) => {
   const morphology = Array.isArray(result.morphology) ? result.morphology : [];
   return `
     <section class="listening-result ${feedbackClass}">
-      <div class="listening-result-head"><span>${icon(result.correct ? 'check' : result.close ? 'brain' : 'repeat')}</span><div><strong>${escapeHtml(result.verdict || (result.correct ? 'Message caught' : result.close ? 'Nearly there' : 'Listen once more next time'))}</strong><p>${escapeHtml(result.message || '')}</p></div></div>
+      <div class="listening-result-head"><span>${icon(result.correct ? 'check' : result.close ? 'brain' : 'repeat')}</span><div><strong>${escapeHtml(result.verdict || (result.correct ? 'Message caught' : result.close ? 'Nearly there' : 'Listen once more next time'))}</strong><p>${escapeHtml(explanationText(result.message || '', result.messageNl || ''))}</p></div></div>
       <div class="listening-transcript" lang="pl"><span>TRANSCRIPT</span><p>${polishInteractive(item.phrase.pl)}</p></div>
-      <div class="listening-translation"><span><strong>EN</strong> ${escapeHtml(item.phrase.en)}</span>${state.settings.showDutch ? `<span lang="nl"><strong>NL</strong> ${escapeHtml(item.phrase.nl)}</span>` : ''}</div>
-      ${morphology.length ? `<div class="listening-form-repairs">${morphology.map((detail) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(detail.expected || detail.learner || '')}" data-sentence="${escapeHtml(item.phrase.pl)}"><strong>${escapeHtml(detail.title || 'Form detail')}</strong><span>${escapeHtml(detail.en || '')}</span></button>`).join('')}</div>` : ''}
+      <div class="listening-translation"><span><strong>${explanationCode()}</strong> ${escapeHtml(primaryTranslation(item.phrase))}</span></div>
+      ${morphology.length ? `<div class="listening-form-repairs">${morphology.map((detail) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(detail.expected || detail.learner || '')}" data-sentence="${escapeHtml(item.phrase.pl)}"><strong>${escapeHtml(detail.title || 'Form detail')}</strong><span>${escapeHtml(explanationText(detail.en || '', detail.nl || ''))}</span></button>`).join('')}</div>` : ''}
       <div class="listening-result-actions">
         <button class="secondary-button compact" type="button" data-action="listening-play" data-speed="natural">${icon('volume')} Hear again</button>
         <button class="primary-button" type="button" data-action="listening-next">${activeListeningLab.index + 1 >= activeListeningLab.items.length ? 'See summary' : 'Next sound'} ${icon('arrow')}</button>
@@ -915,7 +944,7 @@ const advanceListeningLab = () => {
 
 const renderSoundLabGallery = () => `
   <header class="modal-header">
-    <div><p class="eyebrow">POLISH SOUND LAB</p><h2>Train contrasts Dutch ears tend to merge.</h2><p>Each lesson combines a listening anchor, bilingual explanation, examples, and a two-question sound check.</p></div>
+    <div><p class="eyebrow">POLISH SOUND LAB</p><h2>${escapeHtml(explanationText('Train the sound contrasts learners often merge.', 'Train klankcontrasten die je als Nederlandstalige snel door elkaar haalt.'))}</h2><p>${escapeHtml(explanationText('Each lesson combines a listening anchor, one-language explanation, examples, and a two-question sound check.', 'Elke les combineert een luisteranker, uitleg in één taal, voorbeelden en een korte klanktest.'))}</p></div>
     <button class="modal-close" type="button" data-action="close-sound-lab" aria-label="Close sound lab">${icon('close')}</button>
   </header>
   <div class="modal-body sound-gallery-body">
@@ -926,7 +955,7 @@ const renderSoundLabGallery = () => `
     <div class="sound-lesson-grid">
       ${SOUND_LESSONS.map((lesson) => {
         const progress = ensureSoundProgress(lesson.id);
-        return `<button class="sound-lesson-card" type="button" data-action="open-sound-lesson" data-lesson="${escapeHtml(lesson.id)}"><span class="sound-symbol">${escapeHtml(lesson.symbol)}</span><strong>${escapeHtml(lesson.title)}</strong><p>${escapeHtml(lesson.en)}</p><div class="sound-progress"><span class="progress-track"><span style="width:${Math.round(progress.confidence * 100)}%"></span></span><b>${Math.round(progress.confidence * 100)}%</b></div></button>`;
+        return `<button class="sound-lesson-card" type="button" data-action="open-sound-lesson" data-lesson="${escapeHtml(lesson.id)}"><span class="sound-symbol">${escapeHtml(lesson.symbol)}</span><strong>${escapeHtml(lesson.title)}</strong><p>${escapeHtml(explanationText(lesson.en, lesson.nl))}</p><div class="sound-progress"><span class="progress-track"><span style="width:${Math.round(progress.confidence * 100)}%"></span></span><b>${Math.round(progress.confidence * 100)}%</b></div></button>`;
       }).join('')}
     </div>
   </div>
@@ -940,13 +969,13 @@ const renderSoundLesson = () => {
   return `
     <header class="modal-header sound-lesson-header">
       <button class="icon-button" type="button" data-action="sound-back" aria-label="Back to sound lessons">${icon('arrow')}</button>
-      <div><p class="eyebrow">${escapeHtml(lesson.symbol)} · SOUND ${activeSoundLab.quizIndex + 1} OF ${lesson.quiz.length}</p><h2>${escapeHtml(lesson.title)}</h2><p>${escapeHtml(lesson.en)}</p>${state.settings.showDutch ? `<small lang="nl">${escapeHtml(lesson.nl)}</small>` : ''}</div>
+      <div><p class="eyebrow">${escapeHtml(lesson.symbol)} · SOUND ${activeSoundLab.quizIndex + 1} OF ${lesson.quiz.length}</p><h2>${escapeHtml(lesson.title)}</h2><p>${escapeHtml(explanationText(lesson.en, lesson.nl))}</p></div>
       <button class="modal-close" type="button" data-action="close-sound-lab" aria-label="Close sound lab">${icon('close')}</button>
     </header>
     <div class="modal-body sound-lesson-body">
-      <section class="sound-comparison-card"><span>${icon('alert')}</span><div><strong>Dutch-ear warning</strong><p>${escapeHtml(lesson.dutchTrap)}</p></div></section>
+      <section class="sound-comparison-card"><span>${icon('alert')}</span><div><strong>${escapeHtml(explanationText('Listening warning', 'Luisterwaarschuwing'))}</strong><p>${escapeHtml(lesson.dutchTrap)}</p></div></section>
       <section class="sound-examples">
-        ${lesson.examples.map((example) => `<button type="button" data-action="sound-example" data-text="${escapeHtml(example.word)}"><span class="sound-example-word">${escapeHtml(example.word)}</span><span>${escapeHtml(example.en)}${state.settings.showDutch ? ` · ${escapeHtml(example.nl)}` : ''}</span><small>${escapeHtml(example.cue)}</small>${icon('volume')}</button>`).join('')}
+        ${lesson.examples.map((example) => `<button type="button" data-action="sound-example" data-text="${escapeHtml(example.word)}"><span class="sound-example-word">${escapeHtml(example.word)}</span><span>${escapeHtml(explanationText(example.en, example.nl))}</span><small>${escapeHtml(example.cue)}</small>${icon('volume')}</button>`).join('')}
       </section>
       <section class="sound-quiz-card ${activeSoundLab.result ? (activeSoundLab.result.correct ? 'correct' : 'wrong') : ''}">
         <div class="sound-quiz-head"><div><span>QUICK SOUND CHECK</span><h3>Which spelling did you hear?</h3></div><button class="listening-orb small" type="button" data-action="sound-quiz-play">${icon('volume')}<span>${activeSoundLab.plays ? `${activeSoundLab.plays}×` : 'Play'}</span></button></div>
@@ -1063,8 +1092,7 @@ function renderDashboard() {
   const pattern = PATTERNS[0];
   const selections = patternSelections[pattern.id] || pattern.default;
   const sentence = getPatternSentence(pattern, selections);
-  const translationNl = getPatternTranslation(pattern, selections, 'nl');
-  const translationEn = getPatternTranslation(pattern, selections, 'en');
+  const translation = getPatternTranslation(pattern, selections, primaryLanguage());
   const nextScenario = REAL_LIFE_SCENARIOS
     .map((scenario) => ({ scenario, score: getScenarioReadiness(state, scenario) }))
     .sort((a, b) => b.score - a.score)[0];
@@ -1201,13 +1229,13 @@ function renderDashboard() {
             <button class="speaker-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}" aria-label="Listen to ${escapeHtml(sentence)}">${icon('volume')}</button>
           </div>
           <div class="pattern-sentence" lang="pl">${polishInteractive(sentence)}</div>
-          <div class="pattern-translation">NL ${escapeHtml(translationNl)} · EN ${escapeHtml(translationEn)}</div>
+          <div class="pattern-translation">${explanationCode()} ${escapeHtml(translation)}</div>
           <div class="slot-row">
             ${pattern.slots.destination.map((option) => `
               <button class="slot-button ${selections.destination === option.value ? 'active' : ''}" type="button" data-action="pattern-slot" data-pattern="${pattern.id}" data-slot="destination" data-value="${escapeHtml(option.value)}">${escapeHtml(option.source || option.value)}</button>
             `).join('')}
           </div>
-          <div class="pattern-note">${icon('lightbulb')} <span>${escapeHtml(pattern.noteNl)} ${escapeHtml(pattern.noteEn)}</span></div>
+          <div class="pattern-note">${icon('lightbulb')} <span>${escapeHtml(explanationText(pattern.noteEn, pattern.noteNl))}</span></div>
         </article>
       </section>
 
@@ -1251,8 +1279,7 @@ function renderLearn() {
   const pattern = PATTERNS.find((entry) => entry.id === selectedPatternId) || PATTERNS[0];
   const selections = patternSelections[pattern.id] || pattern.default;
   const sentence = getPatternSentence(pattern, selections);
-  const translationNl = getPatternTranslation(pattern, selections, 'nl');
-  const translationEn = getPatternTranslation(pattern, selections, 'en');
+  const translation = getPatternTranslation(pattern, selections, primaryLanguage());
 
   return `
     <div class="view section-stack">
@@ -1351,7 +1378,7 @@ function renderLearn() {
           <div class="pattern-stage">
             <span class="pattern-label">${escapeHtml(pattern.subtitle)}</span>
             <div class="big-pattern" lang="pl">${polishInteractive(sentence)}</div>
-            <div class="big-translation">NL ${escapeHtml(translationNl)} · EN ${escapeHtml(translationEn)}</div>
+            <div class="big-translation">${explanationCode()} ${escapeHtml(translation)}</div>
             <div class="slot-builder">
               ${Object.entries(pattern.slots).map(([slot, options]) => options.map((option) => `
                 <button class="slot-token ${selections[slot] === option.value ? 'variable' : ''}" type="button" data-action="pattern-slot" data-pattern="${pattern.id}" data-slot="${slot}" data-value="${escapeHtml(option.value)}">
@@ -1359,9 +1386,8 @@ function renderLearn() {
                 </button>
               `).join('')).join('')}
             </div>
-            <div class="explanation-pair">
-              <div class="language-explanation"><span class="lang-tag">NEDERLANDS</span><p>${escapeHtml(pattern.noteNl)}</p></div>
-              <div class="language-explanation"><span class="lang-tag">ENGLISH</span><p>${escapeHtml(pattern.noteEn)}</p></div>
+            <div class="explanation-pair single-language">
+              <div class="language-explanation"><span class="lang-tag">${explanationLanguage() === 'nl' ? 'NEDERLANDS' : 'ENGLISH'}</span><p>${escapeHtml(explanationText(pattern.noteEn, pattern.noteNl))}</p></div>
             </div>
           </div>
         </article>
@@ -1379,7 +1405,7 @@ function renderLearn() {
           </button>
           <button class="card intelligence-card form" type="button" data-action="open-morphology" data-word="Polski" data-sentence="Jutro jadę do Polski.">
             <span class="intelligence-icon">${icon('brain')}</span>
-            <div><span class="progress-overline">TAP-TO-EXPLAIN GRAMMAR</span><h3>Why “do Polski” and not “do Polska”?</h3><p>Open the new Form Lens for a word-by-word explanation with Dutch and English comparisons.</p></div>
+            <div><span class="progress-overline">TAP-TO-EXPLAIN GRAMMAR</span><h3>Why “do Polski” and not “do Polska”?</h3><p>Open the Form Lens for a word-by-word explanation in your selected language.</p></div>
             <span class="intelligence-arrow">${icon('arrow')}</span>
           </button>
         </div>
@@ -1553,7 +1579,7 @@ const personalizedConversationMessage = (source = {}, extra = {}) => ({
   ...extra,
 });
 
-const conversationIntentLabel = (suggestion = {}) => state.settings.showDutch
+const conversationIntentLabel = (suggestion = {}) => explanationLanguage() === 'nl'
   ? (suggestion.labelNl || suggestion.labelEn || suggestion.pl)
   : (suggestion.labelEn || suggestion.labelNl || suggestion.pl);
 
@@ -1625,8 +1651,8 @@ const renderConversationHintPanel = (persona, transcript, turn) => {
   const hintState = ensureConversationHintState(persona.id);
   if (!hintState) return '';
   const hint = hintState.stack.at(-1);
-  const primaryCopy = hint ? (state.settings.showEnglish ? hint.en : hint.nl) : '';
-  const secondaryCopy = hint && state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const primaryCopy = hint ? explanationText(hint.en, hint.nl) : '';
+  const secondaryCopy = '';
   const hidingModel = hintState.level === 5 && hintState.recallPhase === 'recall';
   const studyModel = hintState.level === 5 && hintState.recallPhase === 'study';
   return `
@@ -1678,7 +1704,7 @@ const renderConversationMessage = (message, persona) => {
       <div class="message-meta"><span>${escapeHtml(name)}</span><span>·</span><span>${isUser ? 'your reply' : escapeHtml(persona.polishRole)}</span></div>
       <div class="message-bubble">
         <p class="message-polish" lang="pl">${polishInteractive(message.text)}</p>
-        ${!isUser && state.conversation.level !== 'stretch' && (state.settings.showDutch || state.settings.showEnglish) ? `<p class="message-translation">${state.settings.showDutch ? `NL ${escapeHtml(message.nl || '')}` : ''}${state.settings.showDutch && state.settings.showEnglish ? ' · ' : ''}${state.settings.showEnglish ? `EN ${escapeHtml(message.en || '')}` : ''}</p>` : ''}
+        ${!isUser && state.conversation.level !== 'stretch' ? `<p class="message-translation">${explanationCode()} ${escapeHtml(explanationText(message.en || '', message.nl || ''))}</p>` : ''}
       </div>
       ${!isUser ? `<div class="message-actions"><button type="button" data-action="speak" data-text="${escapeHtml(message.text)}">${icon('volume')} Listen</button></div>` : ''}
     </div>
@@ -1783,8 +1809,8 @@ const scrollChatToBottom = () => {
 const tutorWelcome = () => ({
   mode: 'local',
   title: `Cześć, ${state.profile.name}. Ask me why, not just what.`,
-  nl: 'Ik leg Pools uit vanuit het Nederlands en gebruik Engels wanneer dat duidelijker is. Plak een zin, vraag naar een uitgang, of laat me een fout vereenvoudigen.',
-  en: 'I explain Polish through Dutch and use English when it makes the contrast clearer. Paste a sentence, ask about an ending, or ask me to simplify a mistake.',
+  nl: 'Ik leg Pools alleen in het Nederlands uit. Plak een zin, vraag naar een uitgang, of laat me een fout vereenvoudigen.',
+  en: 'I explain Polish in English only. Paste a sentence, ask about an ending, or ask me to simplify a mistake.',
   examples: [
     ['Jadę do Polski.', 'Ik ga naar Polen (met vervoer).', "I'm going to Poland by transport."],
   ],
@@ -1818,8 +1844,8 @@ const renderTutorExerciseHint = (exercise, key, exerciseState) => {
   const hint = exerciseState.stack.at(-1);
   if (!hint) return '';
   const hideModel = exerciseState.level === 5 && exerciseState.recallPhase === 'recall';
-  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
-  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const primaryCopy = explanationText(hint.en, hint.nl);
+  const secondaryCopy = '';
   return `
     <div class="progressive-hint tutor-progressive-hint level-${hint.level}">
       <div class="hint-head">
@@ -1880,12 +1906,11 @@ const renderTutorQuickCheck = (exercise, key) => {
 const renderTutorReply = (reply, key = 'welcome') => `
   <div class="tutor-bubble">
     <h4>${escapeHtml(reply.title || 'Tutor explanation')}</h4>
-    ${state.settings.showEnglish && reply.en ? `<p class="tutor-language-primary"><strong>EN</strong> ${escapeHtml(reply.en)}</p>` : ''}
-    ${state.settings.showDutch && reply.nl ? `<p class="tutor-language-secondary"><strong>NL</strong> ${escapeHtml(reply.nl)}</p>` : ''}
+    ${(reply.en || reply.nl) ? `<p class="tutor-language-primary"><strong>${explanationCode()}</strong> ${escapeHtml(explanationText(reply.en || '', reply.nl || ''))}</p>` : ''}
     ${(reply.examples || []).map((example) => `
       <div class="example-block">
         <strong lang="pl">${polishInteractive(example[0] || '')}</strong>
-        <span>${state.settings.showEnglish ? `EN ${escapeHtml(example[2] || '')}` : ''}${state.settings.showDutch && state.settings.showEnglish ? ' · ' : ''}${state.settings.showDutch ? `NL ${escapeHtml(example[1] || '')}` : ''}</span>
+        <span>${explanationCode()} ${escapeHtml(explanationText(example[2] || '', example[1] || ''))}</span>
         <button class="text-button" style="margin-top:5px" type="button" data-action="speak" data-text="${escapeHtml(example[0] || '')}">${icon('volume')} Listen</button>
       </div>
     `).join('')}
@@ -1912,7 +1937,7 @@ function renderTutor() {
         <header class="tutor-head">
           <div class="tutor-identity">
             <span class="coach-avatar">B</span>
-            <span><strong>Blisko tutor</strong><span>English-first · Dutch-supported · remembers your weak spots</span></span>
+            <span><strong>Blisko tutor</strong><span>${explanationLanguage() === 'nl' ? 'Uitleg in het Nederlands' : 'Explanations in English'} · remembers your weak spots</span></span>
           </div>
           <span class="local-pill">${localMode ? 'LOCAL · OFFLINE' : 'AI PROXY + LOCAL FALLBACK'}</span>
         </header>
@@ -1947,7 +1972,7 @@ function renderTutor() {
             ${weak.length ? weak.map(({ item, progress }) => `
               <div class="memory-row"><span class="memory-dot"></span><p><strong>${escapeHtml(item.pl)}</strong> has ${progress.lapses || 1} lapse${progress.lapses === 1 ? '' : 's'} and ${Math.round(progress.confidence * 100)}% confidence.</p></div>
             `).join('') : `
-              <div class="memory-row"><span class="memory-dot"></span><p>You are a Dutch speaker using English as a support language.</p></div>
+              <div class="memory-row"><span class="memory-dot"></span><p>${explanationLanguage() === 'nl' ? 'Uitleg en vertalingen staan ingesteld op Nederlands.' : 'Explanations and translations are set to English.'}</p></div>
               <div class="memory-row"><span class="memory-dot"></span><p>Your main goal is natural conversation with Polish family-in-law.</p></div>
               <div class="memory-row"><span class="memory-dot"></span><p>Your interests include motorsport, snowboarding, festivals, and bonsai.</p></div>
             `}
@@ -2140,21 +2165,21 @@ function renderProgress() {
       <section class="progress-snapshot">
         <div class="progress-snapshot-heading">
           <div>
-            <p class="eyebrow progress-page-eyebrow">PROGRESS <small lang="nl">VOORTGANG</small></p>
-            <h2><span>Your Polish, in numbers</span><small lang="nl">Jouw Pools, in cijfers</small></h2>
-            <p class="progress-intro"><span>Based on what you can genuinely recall, understand, and say—not on lessons merely opened.</span><small lang="nl">Gebaseerd op wat je echt kunt terughalen, verstaan en zeggen.</small></p>
+            <p class="eyebrow progress-page-eyebrow">${escapeHtml(explanationText('PROGRESS', 'VOORTGANG'))}</p>
+            <h2>${escapeHtml(explanationText('Your Polish, in numbers', 'Jouw Pools, in cijfers'))}</h2>
+            <p class="progress-intro">${escapeHtml(explanationText('Based on what you can genuinely recall, understand, and say—not on lessons merely opened.', 'Gebaseerd op wat je echt kunt terughalen, verstaan en zeggen.'))}</p>
           </div>
           <span class="evidence-chip">${Math.round(estimateEvidence * 100)}% evidence · ${escapeHtml(estimateConfidence)}</span>
         </div>
 
         <article class="card comfort-forecast-card" style="--comfort-angle:${Math.round(comfortProgress * 360)}deg">
           <div class="comfort-forecast-copy">
-            <span class="progress-overline">TIME TO COMFORTABLE FAMILY CONVERSATIONS<small lang="nl">Tot comfortabele familiegesprekken</small></span>
+            <span class="progress-overline">${escapeHtml(explanationText('TIME TO COMFORTABLE FAMILY CONVERSATIONS', 'TOT COMFORTABELE FAMILIEGESPREKKEN'))}</span>
             <div class="comfort-forecast-number">
               <strong>${estimatedDays ? `≈ ${estimatedDays}` : 'Now'}</strong>
               <span>${estimatedDays ? 'days' : 'ready'}</span>
             </div>
-            <p><span>${escapeHtml(forecastCopy)}</span><small class="secondary-sentence" lang="nl">${escapeHtml(forecastCopyNl)}</small></p>
+            <p>${escapeHtml(explanationText(forecastCopy, forecastCopyNl))}</p>
           </div>
           <div class="comfort-readiness-ring" aria-label="${Math.round(comfortProgress * 100)} percent ready for comfortable family conversations">
             <div><strong>${Math.round(comfortProgress * 100)}%</strong><span>ready</span></div>
@@ -2167,25 +2192,25 @@ function renderProgress() {
 
         <div class="progress-stat-grid">
           <button class="card progress-stat-card" type="button" data-action="go-view" data-view="library">
-            <span class="progress-stat-label">VOCABULARY <small lang="nl">WOORDENSCHAT</small></span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('VOCABULARY', 'WOORDENSCHAT'))}</span>
             <span class="progress-stat-value"><strong>${metrics.masteredWords}</strong><b>/ ${totalWords}</b></span>
             <span class="progress-stat-detail">${learningWords} learning · ${fragileWords} need support</span>
             <span class="progress-stat-icon">${icon('book')}</span>
           </button>
           <article class="card progress-stat-card">
-            <span class="progress-stat-label">ESTIMATED LEVEL <small lang="nl">GESCHAT NIVEAU</small></span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('ESTIMATED LEVEL', 'GESCHAT NIVEAU'))}</span>
             <span class="progress-stat-value"><strong>${levelLabel}</strong></span>
             <span class="progress-stat-detail">${Math.round(metrics.cefrProgress * 100)}% toward ${metrics.nextCefr} · ${escapeHtml(estimateConfidence)}</span>
             <span class="progress-stat-icon">${icon('flag')}</span>
           </article>
           <article class="card progress-stat-card">
-            <span class="progress-stat-label">STREAK <small lang="nl">ACTIEVE REEKS</small></span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('STREAK', 'ACTIEVE REEKS'))}</span>
             <span class="progress-stat-value"><strong>🔥 ${state.stats.streak || 0}</strong></span>
             <span class="progress-stat-detail">best ${state.stats.bestStreak || 0} days · ${activeDays}/14 active recently</span>
             <span class="progress-stat-icon">${icon('calendar')}</span>
           </article>
           <button class="card progress-stat-card" type="button" data-action="go-view" data-view="talk">
-            <span class="progress-stat-label">CONVERSATIONS <small lang="nl">GESPREKKEN</small></span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('CONVERSATIONS', 'GESPREKKEN'))}</span>
             <span class="progress-stat-value"><strong>💬 ${simulatedConversations}</strong></span>
             <span class="progress-stat-detail">${completedConversations} completed · ${metrics.unlockedConversations} scenarios ready</span>
             <span class="progress-stat-icon">${icon('message')}</span>
@@ -2194,13 +2219,13 @@ function renderProgress() {
 
         <article class="card snapshot-skills-card">
           <div class="snapshot-skills-head">
-            <div><span class="progress-overline">SKILLS<small lang="nl">Vaardigheden</small></span><p><span>Your estimate separates understanding from producing Polish.</span><small class="secondary-sentence" lang="nl">De schatting maakt onderscheid tussen Pools begrijpen en zelf produceren.</small></p></div>
+            <div><span class="progress-overline">${escapeHtml(explanationText('SKILLS', 'VAARDIGHEDEN'))}</span><p>${escapeHtml(explanationText('Your estimate separates understanding from producing Polish.', 'De schatting maakt onderscheid tussen Pools begrijpen en zelf produceren.'))}</p></div>
             <span class="soft-pill">${hasSkillEvidence ? `strongest: ${escapeHtml(strongestSkill.title)}` : escapeHtml(strongestSkill.title)}</span>
           </div>
           <div class="snapshot-skill-list">
             ${snapshotSkills.map((skill) => `
               <div class="snapshot-skill-row">
-                <span><strong>${escapeHtml(skill.title)}</strong><small lang="nl">${escapeHtml(skill.secondary)} · ${skill.attempts} checks</small></span>
+                <span><strong>${escapeHtml(explanationText(skill.title, skill.secondary))}</strong><small>${skill.attempts} ${escapeHtml(explanationText('checks', 'metingen'))}</small></span>
                 <div class="snapshot-skill-track"><i style="width:${Math.round(skill.value * 100)}%"></i></div>
                 <b>${Math.round(skill.value * 100)}%</b>
               </div>
@@ -2211,7 +2236,7 @@ function renderProgress() {
 
         <article class="card support-independence-card">
           <div class="support-independence-head">
-            <div><span class="progress-overline">SUPPORT INDEPENDENCE<small lang="nl">Zelfstandig zonder hulp</small></span><h3>${evidenceReviews.length ? `${Math.round(independenceRate * 100)}% independent retrieval` : 'No hint baseline yet'}</h3><p><span>Hints are not failures. This measures how often useful Polish returns before support is needed.</span><small class="secondary-sentence" lang="nl">Hints zijn geen fouten. Dit meet hoe vaak bruikbaar Pools terugkomt vóórdat hulp nodig is.</small></p></div>
+            <div><span class="progress-overline">${escapeHtml(explanationText('SUPPORT INDEPENDENCE', 'ZELFSTANDIG ZONDER HULP'))}</span><h3>${evidenceReviews.length ? `${Math.round(independenceRate * 100)}% ${escapeHtml(explanationText('independent retrieval', 'zelfstandig opgehaald'))}` : escapeHtml(explanationText('No hint baseline yet', 'Nog geen basislijn voor hints'))}</h3><p>${escapeHtml(explanationText('Hints are not failures. This measures how often useful Polish returns before support is needed.', 'Hints zijn geen fouten. Dit meet hoe vaak bruikbaar Pools terugkomt vóórdat hulp nodig is.'))}</p></div>
             <div class="support-independence-score" style="--independence:${Math.round(independenceRate * 100)}%"><strong>${independentCorrect}</strong><span>independent wins</span></div>
           </div>
           <div class="support-independence-track"><span style="width:${Math.round(independenceRate * 100)}%"></span></div>
@@ -2228,7 +2253,7 @@ function renderProgress() {
 
         <article class="card listening-intelligence-card">
           <div class="listening-intelligence-head">
-            <div><span class="progress-overline">LISTENING INTELLIGENCE<small lang="nl">Luisterintelligentie</small></span><h3>${listeningStats.attempts ? `${naturalListeningAccuracy}% at natural speed` : 'Build a real listening baseline'}</h3><p><span>Blisko now separates slow recognition, natural-speed understanding, dictation detail, and sound contrasts.</span><small class="secondary-sentence" lang="nl">Blisko meet langzaam herkennen, natuurlijk tempo, dicteerdetail en klankcontrasten afzonderlijk.</small></p></div>
+            <div><span class="progress-overline">${escapeHtml(explanationText('LISTENING INTELLIGENCE', 'LUISTERINTELLIGENTIE'))}</span><h3>${listeningStats.attempts ? `${naturalListeningAccuracy}% ${escapeHtml(explanationText('at natural speed', 'op natuurlijk tempo'))}` : escapeHtml(explanationText('Build a real listening baseline', 'Bouw een echte luisterbasislijn op'))}</h3><p>${escapeHtml(explanationText('Blisko now separates slow recognition, natural-speed understanding, dictation detail, and sound contrasts.', 'Blisko meet langzaam herkennen, natuurlijk tempo, dicteerdetail en klankcontrasten afzonderlijk.'))}</p></div>
             <button class="secondary-button compact" type="button" data-action="open-listening-lab">${icon('headphones')} Start listening lab</button>
           </div>
           <div class="listening-evidence-grid">
@@ -2248,7 +2273,7 @@ function renderProgress() {
       <section class="progress-overview">
         <article class="card cefr-card" style="--cefr-progress:${Math.round(metrics.cefrProgress * 100)}%">
           <div>
-            <p class="eyebrow progress-page-eyebrow">ESTIMATED COMMUNICATIVE LEVEL <small lang="nl">GESCHAT COMMUNICATIEF NIVEAU</small></p>
+            <p class="eyebrow progress-page-eyebrow">${escapeHtml(explanationText('ESTIMATED COMMUNICATIVE LEVEL', 'GESCHAT COMMUNICATIEF NIVEAU'))}</p>
             <h2>${levelLabel} → ${metrics.nextCefr}</h2>
             <p>This is a conservative estimate from active recall, listening, guided and free production, pronunciation, grammar patterns, and completed scenarios—not a claim based on lesson count.</p>
             <div class="cefr-scale">
@@ -2263,7 +2288,7 @@ function renderProgress() {
         </article>
 
         <article class="card conversation-card">
-          <span class="pattern-label progress-bilingual-label">NEXT REAL-WORLD WIN<small lang="nl">Volgende winst in het echte leven</small></span>
+          <span class="pattern-label progress-bilingual-label">${escapeHtml(explanationText('NEXT REAL-WORLD WIN', 'VOLGENDE WINST IN HET ECHTE LEVEN'))}</span>
           <div class="conversation-count"><strong>${Math.round(nextScenario.score * 100)}%</strong><span>${escapeHtml(nextScenario.scenario.title)} readiness</span></div>
           <p>${metrics.estimatedWeeks ? `At your measured or chosen pace, the model estimates about ${estimatedDays} days to comfortable family small talk.` : 'Your current scenario model has reached the comfortable small-talk target.'}</p>
           <div class="conversation-tags">
@@ -2276,7 +2301,7 @@ function renderProgress() {
       <section class="can-do-calibration-grid">
         <article class="card can-do-card">
           <div class="section-heading">
-            <div><p class="eyebrow progress-page-eyebrow">REAL-LIFE CAN-DO EVIDENCE <small lang="nl">Bewijs uit echte situaties</small></p><h2>${readyCanDoCount} of ${metrics.canDo.length} practical abilities ready</h2><p>CEFR estimates become useful only when they describe what you can actually do.</p></div>
+            <div><p class="eyebrow progress-page-eyebrow">${escapeHtml(explanationText('REAL-LIFE CAN-DO EVIDENCE', 'BEWIJS UIT ECHTE SITUATIES'))}</p><h2>${readyCanDoCount} ${escapeHtml(explanationText(`of ${metrics.canDo.length} practical abilities ready`, `van ${metrics.canDo.length} praktische vaardigheden gereed`))}</h2><p>${escapeHtml(explanationText('CEFR estimates become useful only when they describe what you can actually do.', 'CEFR-schattingen zijn pas nuttig wanneer ze beschrijven wat je echt kunt.'))}</p></div>
             <span class="can-do-score">${readyCanDoCount}/${metrics.canDo.length}</span>
           </div>
           <div class="can-do-list">
@@ -2284,7 +2309,7 @@ function renderProgress() {
           </div>
         </article>
         <article class="card evidence-quality-card">
-          <span class="progress-overline">EVIDENCE QUALITY<small lang="nl">Kwaliteit van de meting</small></span>
+          <span class="progress-overline">${escapeHtml(explanationText('EVIDENCE QUALITY', 'KWALITEIT VAN DE METING'))}</span>
           <h3>${Math.round(metrics.evidenceConfidence * 100)}% confidence in this estimate</h3>
           <p>The model lowers certainty when a skill has too few attempts. It never fills an evidence gap with vocabulary count alone.</p>
           <div class="evidence-quality-meter"><span style="width:${Math.round(metrics.evidenceConfidence * 100)}%"></span></div>
@@ -2299,7 +2324,7 @@ function renderProgress() {
 
       <section class="mastery-snapshot-grid">
         <article class="card mastery-distribution-card">
-          <div class="section-heading"><div><h2>Memory distribution<small lang="nl">Geheugenverdeling</small></h2><p>Where every curriculum word currently sits.</p></div><span class="soft-pill">+${newlyStable} stable this week</span></div>
+          <div class="section-heading"><div><h2>${escapeHtml(explanationText('Memory distribution', 'Geheugenverdeling'))}</h2><p>${escapeHtml(explanationText('Where every curriculum word currently sits.', 'Waar elk woord uit het leerprogramma nu staat.'))}</p></div><span class="soft-pill">+${newlyStable} ${escapeHtml(explanationText('stable this week', 'deze week stabiel'))}</span></div>
           <div class="mastery-segmented-track" aria-label="Vocabulary mastery distribution">
             <span class="segment-strong" style="width:${masterySegments.strong}%"></span>
             <span class="segment-stable" style="width:${masterySegments.stable}%"></span>
@@ -2314,7 +2339,7 @@ function renderProgress() {
           </div>
         </article>
         <article class="card estimate-method-card">
-          <span class="progress-overline">WHY THE NUMBER MOVES<small lang="nl">Waarom de schatting verandert</small></span>
+          <span class="progress-overline">${escapeHtml(explanationText('WHY THE NUMBER MOVES', 'WAAROM DE SCHATTING VERANDERT'))}</span>
           <h3>Real evidence changes the forecast.</h3>
           <div class="estimate-factor"><span>Conversation readiness</span><b>${Math.round(metrics.conversationReadiness * 100)}%</b><div class="progress-track"><span style="width:${Math.round(metrics.conversationReadiness * 100)}%"></span></div></div>
           <div class="estimate-factor"><span>Speaking evidence</span><b>${Math.round(metrics.speaking * 100)}%</b><div class="progress-track"><span style="width:${Math.round(metrics.speaking * 100)}%"></span></div></div>
@@ -2335,7 +2360,7 @@ function renderProgress() {
 
       <section class="chart-grid">
         <article class="card chart-card">
-          <div class="section-heading"><div><h2>Focused minutes<small lang="nl">Gerichte minuten</small></h2><p>The last fourteen days on this device.</p></div><span class="soft-pill" style="padding:6px 9px;background:var(--green-soft);color:var(--green);font-size:9px">${Math.round(state.stats.totalMinutes)} min total</span></div>
+          <div class="section-heading"><div><h2>${escapeHtml(explanationText('Focused minutes', 'Gerichte minuten'))}</h2><p>${escapeHtml(explanationText('The last fourteen days on this device.', 'De laatste 14 dagen op dit apparaat.'))}</p></div><span class="soft-pill" style="padding:6px 9px;background:var(--green-soft);color:var(--green);font-size:9px">${Math.round(state.stats.totalMinutes)} min</span></div>
           <div class="activity-chart">
             ${activity.map((day) => `
               <div class="chart-column" title="${day.date}: ${day.minutes} minutes">
@@ -2347,7 +2372,7 @@ function renderProgress() {
         </article>
 
         <article class="card chart-card">
-          <div class="section-heading"><div><h2>Grammar patterns<small lang="nl">Grammaticapatronen</small></h2><p>Confidence grows through sentences, not rule memorization.</p></div></div>
+          <div class="section-heading"><div><h2>${escapeHtml(explanationText('Grammar patterns', 'Grammaticapatronen'))}</h2><p>${escapeHtml(explanationText('Confidence grows through sentences, not rule memorization.', 'Vertrouwen groeit door zinnen, niet door regels uit het hoofd te leren.'))}</p></div></div>
           <div class="mastery-list">
             ${conceptRows.map(({ concept, progress }) => `
               <div class="mastery-row">
@@ -2523,7 +2548,7 @@ const buildPatternExercise = (pattern, selections, index = 0, { workout = false 
   const translationNl = getPatternTranslation(pattern, selections, 'nl');
   const translationEn = getPatternTranslation(pattern, selections, 'en');
   const primary = primaryLanguage() === 'nl' ? translationNl : translationEn;
-  const secondary = primaryLanguage() === 'nl' ? translationEn : translationNl;
+  const secondary = '';
   const tokens = cleanAnswer.split(/\s+/).filter(Boolean)
     .map((value, tokenIndex) => ({ id: `${pattern.id}-${index}-${tokenIndex}-${value}`, value }));
   const patternProgress = state.progress.patterns?.[pattern.id] || null;
@@ -2789,7 +2814,7 @@ const renderPlacementSummary = () => {
         <div class="feedback-coach-note">
           <strong>What happens next</strong>
           <p>The result calibrates difficulty and progress estimates. Normal practice will gradually outweigh this short diagnostic.</p>
-          ${state.settings.showDutch ? '<small lang="nl">Het resultaat kalibreert de moeilijkheid en voortgangsschatting. Gewone oefeningen wegen na verloop van tijd zwaarder.</small>' : ''}
+          <small>${escapeHtml(explanationText('The result calibrates difficulty and the progress estimate. Ordinary exercises carry more weight over time.', 'Het resultaat kalibreert de moeilijkheid en voortgangsschatting. Gewone oefeningen wegen na verloop van tijd zwaarder.'))}</small>
         </div>
       </section>
     </main>
@@ -2856,8 +2881,7 @@ const renderPlacementQuestion = (question) => {
   const feedback = placementSession.answered ? `
     <div class="feedback-box ${result?.correct ? 'correct' : 'wrong'} placement-feedback">
       <div class="feedback-verdict-row"><h4>${escapeHtml(result?.verdict || (result?.correct ? 'Correct' : result?.close ? 'Close' : 'Not yet'))}</h4><span class="feedback-error-chip">${escapeHtml((result?.errorType || 'diagnostic').replaceAll('_', ' '))}</span></div>
-      <p>${escapeHtml(result?.message || '')}</p>
-      ${state.settings.showDutch && result?.messageNl ? `<p class="feedback-secondary" lang="nl">${escapeHtml(result.messageNl)}</p>` : ''}
+      <p>${escapeHtml(explanationText(result?.message || '', result?.messageNl || ''))}</p>
       ${question.answer ? `<div class="feedback-model-answer"><span>Model answer</span><strong>${escapeHtml(question.answer)}</strong></div>` : ''}
     </div>` : '';
 
@@ -2945,7 +2969,7 @@ const renderSessionHintRecall = (exercise) => {
       <div class="hint-recall-card study">
         <span class="hint-recall-label">STUDY BRIEFLY</span>
         <strong class="hint-answer-display">${escapeHtml(hint?.answer || exercise.answer)}</strong>
-        ${exercise.answerKind !== 'meaning' ? `<span class="hint-answer-translation">${state.settings.showEnglish ? `EN ${escapeHtml(exercise.translations?.en || '')}` : ''}${state.settings.showEnglish && state.settings.showDutch ? ' · ' : ''}${state.settings.showDutch ? `NL ${escapeHtml(exercise.translations?.nl || '')}` : ''}</span>` : ''}
+        ${exercise.answerKind !== 'meaning' ? `<span class="hint-answer-translation">${explanationCode()} ${escapeHtml(explanationText(exercise.translations?.en || '', exercise.translations?.nl || ''))}</span>` : ''}
         <p>The answer will disappear. Retrieve it once before the review is saved.</p>
         <button class="primary-button" type="button" data-action="begin-hint-recall">Hide it and recall ${icon('arrow')}</button>
       </div>
@@ -2987,8 +3011,8 @@ const renderSessionHintRecall = (exercise) => {
 const renderSessionHintPanel = (exercise) => {
   if (!session.hintStack.length) return '';
   const hint = session.hintStack.at(-1);
-  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
-  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const primaryCopy = explanationText(hint.en, hint.nl);
+  const secondaryCopy = '';
   const hideCopyForRecall = hint.level === 5 && session.hintRecallPhase === 'recall';
   return `
     <section class="progressive-hint level-${hint.level}" aria-live="polite">
@@ -3171,7 +3195,7 @@ const renderExercise = (exercise) => {
       <span>
         <strong>${Number(exercise.adaptiveSupportLevel || 0) >= 2 ? 'Recognition first' : 'Word tiles this time'}</strong>
         <small>${escapeHtml(exercise.adaptiveSupportReason || 'Blisko made this step smaller because this sentence needed support before.')}</small>
-        ${state.settings.showDutch ? `<em lang="nl">Na een paar zelfstandige goede antwoorden wordt de oefening weer moeilijker.</em>` : ''}
+        <em>${escapeHtml(explanationText('After a few independent correct answers, the exercise becomes harder again.', 'Na een paar zelfstandige goede antwoorden wordt de oefening weer moeilijker.'))}</em>
       </span>
     </div>
   ` : '';
@@ -3200,28 +3224,25 @@ const renderExerciseFeedback = (exercise) => {
     || ((exercise.type === 'choice' || exercise.type === 'listening')
       && /choose the meaning/i.test(exercise.instruction || ''));
   const meaningReveal = testsMeaning && item
-    ? `<div class="feedback-meaning"><span><strong>NL</strong> ${escapeHtml(item.nl || '')}</span><span><strong>EN</strong> ${escapeHtml(item.en || '')}</span></div>`
+    ? `<div class="feedback-meaning"><span><strong>${explanationCode()}</strong> ${escapeHtml(primaryTranslation(item))}</span></div>`
     : '';
   const hintSummary = session.hintLevel
     ? `<div class="feedback-hint-summary">${icon('lightbulb')} Hint level ${session.hintLevel} used${session.hintRecallCompleted ? ' · active recall completed' : ''}. The next interval will stay appropriately shorter.</div>`
     : '<div class="feedback-hint-summary independent">Retrieved without support.</div>';
   const verdict = result.verdict || (result.correct ? 'Good retrieval' : result.close ? 'Almost there' : 'Build this memory again');
   const showModel = !result.correct || !['exact', 'accepted_alternative'].includes(result.errorType || '') || exercise.type === 'speaking';
-  const secondaryFeedback = state.settings.showDutch && result.messageNl
-    ? `<p class="feedback-secondary" lang="nl">${escapeHtml(result.messageNl)}</p>`
-    : '';
+  const localizedFeedbackMessage = explanationText(result.message || '', result.messageNl || '');
   const errorLabel = (result.errorType || '').replaceAll('_', ' ');
   const conceptExplanation = concept
-    ? `<div class="feedback-coach-note"><strong>${escapeHtml(concept.title || 'Why this form works')}</strong><p>${escapeHtml(state.settings.showEnglish === false ? concept.nl : concept.en)}</p>${state.settings.showDutch && state.settings.showEnglish && concept.nl ? `<small lang="nl">${escapeHtml(concept.nl)}</small>` : ''}${concept.commonMistake ? `<em>${escapeHtml(concept.commonMistake)}</em>` : ''}</div>`
+    ? `<div class="feedback-coach-note"><strong>${escapeHtml(concept.title || 'Why this form works')}</strong><p>${escapeHtml(explanationText(concept.en, concept.nl))}</p>${concept.commonMistake ? `<em>${escapeHtml(concept.commonMistake)}</em>` : ''}</div>`
     : '';
   const morphologyExplanation = Array.isArray(result.morphology) && result.morphology.length
-    ? `<div class="feedback-morphology"><div class="feedback-morphology-head"><span>${icon('brain')}</span><div><strong>Form detective</strong><small>Tap a repair to inspect the ending in context.</small></div></div>${result.morphology.map((detail) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(detail.expected || detail.learner || '')}" data-sentence="${escapeHtml(result.expected || exercise.answer || '')}"><span>${escapeHtml(detail.title || 'Polish form')}</span><p>${escapeHtml(detail.en || '')}</p>${state.settings.showDutch && detail.nl ? `<small lang="nl">${escapeHtml(detail.nl)}</small>` : ''}</button>`).join('')}</div>`
+    ? `<div class="feedback-morphology"><div class="feedback-morphology-head"><span>${icon('brain')}</span><div><strong>Form detective</strong><small>Tap a repair to inspect the ending in context.</small></div></div>${result.morphology.map((detail) => `<button type="button" data-action="open-morphology" data-word="${escapeHtml(detail.expected || detail.learner || '')}" data-sentence="${escapeHtml(result.expected || exercise.answer || '')}"><span>${escapeHtml(detail.title || 'Polish form')}</span><p>${escapeHtml(explanationText(detail.en || '', detail.nl || ''))}</p></button>`).join('')}</div>`
     : '';
   return `
     <div class="feedback-box ${feedbackClass}">
       <div class="feedback-verdict-row"><h4>${escapeHtml(verdict)}</h4>${errorLabel ? `<span class="feedback-error-chip">${escapeHtml(errorLabel)}</span>` : ''}</div>
-      <p>${escapeHtml(result.message || '')}</p>
-      ${secondaryFeedback}
+      <p>${escapeHtml(localizedFeedbackMessage)}</p>
       ${showModel ? `<div class="feedback-model-answer"><span>Model answer · tap a word to explain it</span><strong lang="pl">${polishInteractive(result.expected || exercise.answer)}</strong></div>` : ''}
       ${meaningReveal}
       ${morphologyExplanation}
@@ -3721,8 +3742,8 @@ const renderRapidHintPanel = (item) => {
   const hint = activeGame.hintStack?.at(-1);
   if (!hint) return '';
   const hideModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'recall';
-  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
-  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const primaryCopy = explanationText(hint.en, hint.nl);
+  const secondaryCopy = '';
   return `
     <div class="progressive-hint game-progressive-hint level-${hint.level}">
       <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>${renderHintMeter(hint.level)}</div>
@@ -3800,8 +3821,8 @@ const renderMatchingHintPanel = () => {
   if (!item || !hint) return '';
   const hideModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'recall';
   const studyModel = activeGame.hintLevel === 5 && activeGame.hintRecallPhase === 'study';
-  const primaryCopy = state.settings.showEnglish ? hint.en : hint.nl;
-  const secondaryCopy = state.settings.showEnglish && state.settings.showDutch ? hint.nl : '';
+  const primaryCopy = explanationText(hint.en, hint.nl);
+  const secondaryCopy = '';
   return `
     <div class="progressive-hint game-progressive-hint level-${hint.level}">
       <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>${renderHintMeter(hint.level)}</div>
@@ -4153,9 +4174,8 @@ const openSettings = () => {
 
       <section class="settings-section">
         <h3>Explanations and audio</h3>
-        <p>The interface stays in English. Dutch is the primary comparison and translation language; English remains available as support where it explains the contrast better.</p>
-        <div class="toggle-row"><span class="toggle-copy"><strong>Use Dutch first</strong><span>Primary comparison and translation language</span></span><label class="switch"><input id="settings-dutch" type="checkbox" ${state.settings.showDutch ? 'checked' : ''}><span class="switch-track"></span></label></div>
-        <div class="toggle-row"><span class="toggle-copy"><strong>Show English support</strong><span>Useful for grammar terminology and direct contrasts</span></span><label class="switch"><input id="settings-english" type="checkbox" ${state.settings.showEnglish ? 'checked' : ''}><span class="switch-track"></span></label></div>
+        <p>Choose one translation and explanation language. Dutch and English are never displayed together. You can also switch instantly with the flag in the top-right corner.</p>
+        <div class="form-field full"><label for="settings-language">Explanation language</label><select id="settings-language"><option value="nl" ${explanationLanguage() === 'nl' ? 'selected' : ''}>🇳🇱 Nederlands</option><option value="en" ${explanationLanguage() === 'en' ? 'selected' : ''}>🇬🇧 English</option></select><small>This controls translations, hints, tutor explanations, grammar notes, and feedback.</small></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Auto-speak simulator turns</strong><span>Play each new Polish line automatically</span></span><label class="switch"><input id="settings-auto-speak" type="checkbox" ${state.settings.autoSpeak ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="toggle-row"><span class="toggle-copy"><strong>Gentle haptics</strong><span>Small vibration feedback on supported mobile devices</span></span><label class="switch"><input id="settings-haptics" type="checkbox" ${state.settings.haptics ? 'checked' : ''}><span class="switch-track"></span></label></div>
         <div class="form-grid audio-settings-grid" style="margin-top:12px">
@@ -4202,8 +4222,7 @@ const openSettings = () => {
 const saveSettings = () => {
   const name = document.getElementById('settings-name')?.value.trim() || 'Kars';
   const dailyGoal = Math.max(5, Math.min(90, Number(document.getElementById('settings-goal')?.value) || 15));
-  const showDutch = Boolean(document.getElementById('settings-dutch')?.checked);
-  const showEnglish = Boolean(document.getElementById('settings-english')?.checked);
+  const selectedExplanationLanguage = document.getElementById('settings-language')?.value === 'en' ? 'en' : 'nl';
 
   state.profile.name = name;
   state.profile.speakerGender = document.getElementById('settings-gender')?.value || 'male';
@@ -4227,8 +4246,9 @@ const saveSettings = () => {
   state.profile.familyNames.fatherInLaw = state.profile.familyProfiles['father-in-law'].name;
   state.profile.familyNames.grandmother = state.profile.familyProfiles.grandmother.name;
   state.profile.dailyGoal = dailyGoal;
-  state.settings.showDutch = showDutch || !showEnglish;
-  state.settings.showEnglish = showEnglish || !showDutch;
+  state.settings.explanationLanguage = selectedExplanationLanguage;
+  state.settings.showDutch = selectedExplanationLanguage === 'nl';
+  state.settings.showEnglish = selectedExplanationLanguage === 'en';
   state.settings.autoSpeak = Boolean(document.getElementById('settings-auto-speak')?.checked);
   state.settings.haptics = Boolean(document.getElementById('settings-haptics')?.checked);
   state.settings.speechRate = Number(document.getElementById('settings-rate')?.value) || 0.86;
@@ -4476,7 +4496,7 @@ const openWordDetail = (wordId) => {
     </header>
     <div class="modal-body">
       <div class="page-intro card" style="margin-bottom:18px">
-        <div><p class="eyebrow">POLISH IN CONTEXT</p><h2 lang="pl">${polishInteractive(word.pl)}</h2><p>NL ${escapeHtml(word.nl)} · EN ${escapeHtml(word.en)}</p></div>
+        <div><p class="eyebrow">POLISH IN CONTEXT</p><h2 lang="pl">${polishInteractive(word.pl)}</h2><p><strong>${explanationCode()}</strong> ${escapeHtml(primaryTranslation(word))}</p></div>
         <button class="speaker-button" type="button" data-action="speak" data-text="${escapeHtml(word.pl)}">${icon('volume')}</button>
       </div>
       <div class="form-grid">
@@ -5083,6 +5103,9 @@ const handleAction = (event) => {
     case 'placement-finish':
       closePlacementTest({ toProgress: true });
       break;
+    case 'toggle-language':
+      setExplanationLanguage(explanationLanguage() === 'nl' ? 'en' : 'nl');
+      break;
     case 'open-settings':
       openSettings();
       break;
@@ -5393,6 +5416,9 @@ const repairKnownTutorMisroutes = () => {
 
 const initialize = async () => {
   state = await loadState({ appVersion: APP_VERSION });
+  state.settings.explanationLanguage = state.settings.explanationLanguage === 'en' ? 'en' : 'nl';
+  state.settings.showDutch = state.settings.explanationLanguage === 'nl';
+  state.settings.showEnglish = state.settings.explanationLanguage === 'en';
   await save({ immediate: true });
   try {
     const automaticBackup = await ensureAutomaticBackup(state, { appVersion: APP_VERSION });

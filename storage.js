@@ -5,7 +5,7 @@ const STATE_KEY = 'app-state-v1';
 const SAFETY_BACKUPS_KEY = 'safety-backups-v1';
 const FALLBACK_KEY = 'blisko-app-state-v1';
 const FALLBACK_BACKUPS_KEY = 'blisko-safety-backups-v1';
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 8;
 const MAX_SAFETY_BACKUPS = 5;
 
 const SKILL_KEYS = ['reading', 'listening', 'guidedProduction', 'freeProduction', 'pronunciation'];
@@ -71,8 +71,9 @@ export const createDefaultState = () => ({
     speechRate: 0.86,
     speechVoiceURI: '',
     listeningDefaultSpeed: 'natural',
+    explanationLanguage: 'nl',
     showDutch: true,
-    showEnglish: true,
+    showEnglish: false,
     autoSpeak: false,
     haptics: true,
     aiProxyUrl: '',
@@ -358,6 +359,17 @@ const migrateState = (state) => {
     : [];
 
   state.settings = state.settings || {};
+  const migratedExplanationLanguage = previousSchema < 8
+    ? (state.settings.showDutch === false && state.settings.showEnglish === true ? 'en' : 'nl')
+    : ['nl', 'en'].includes(state.settings.explanationLanguage)
+      ? state.settings.explanationLanguage
+      : state.settings.showDutch !== false
+        ? 'nl'
+        : 'en';
+  state.settings.explanationLanguage = migratedExplanationLanguage;
+  // Keep the legacy booleans synchronized for older rendering and backup compatibility.
+  state.settings.showDutch = migratedExplanationLanguage === 'nl';
+  state.settings.showEnglish = migratedExplanationLanguage === 'en';
   state.settings.speechVoiceURI = state.settings.speechVoiceURI || '';
   state.settings.listeningDefaultSpeed = ['slow','natural','fast'].includes(state.settings.listeningDefaultSpeed)
     ? state.settings.listeningDefaultSpeed

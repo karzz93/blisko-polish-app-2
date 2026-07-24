@@ -5,9 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.7';
-import { getTodayKey } from './storage.js?v=1.7';
-import { explainPolishDifference } from './polish.js?v=1.7';
+} from './data.js?v=1.8';
+import { getTodayKey } from './storage.js?v=1.8';
+import { explainPolishDifference } from './polish.js?v=1.8';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -1801,7 +1801,7 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
   const exercisePlan = chooseExerciseType(item, progress, index, mode);
   const preferredType = exercisePlan.type;
   const translation = translationFor(item, language);
-  const dualTranslation = language === 'nl' ? item.en : item.nl;
+  const dualTranslation = '';
   const base = {
     id: `${item.id}-${Date.now()}-${index}`,
     itemId: item.id,
@@ -1918,7 +1918,7 @@ export const makeExercise = (item, progress, index = 0, { mode = 'smart', langua
       skillKey: 'pronunciation',
       instruction: 'Say it out loud',
       mainText: item.pl,
-      subText: `${translation} · ${dualTranslation}`,
+      subText: translation,
       answer: item.pl,
       audioText: item.pl,
     };

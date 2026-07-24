@@ -477,6 +477,45 @@ h4 {
   gap: 9px;
 }
 
+.language-flag-button {
+  min-width: 62px;
+  height: 35px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.language-flag-button:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
+  background: var(--panel-strong);
+}
+
+.language-flag-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--green) 32%, transparent);
+  outline-offset: 2px;
+}
+
+.language-flag {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.language-flag-button strong {
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+
 .status-pill,
 .soft-pill,
 .skill-pill,
@@ -4076,7 +4115,7 @@ button.word-row:hover {
   font-size: 12px;
 }
 
-/* English remains the interface language; Dutch is shown as quieter support. */
+/* Only the selected explanation language is shown at a time. */
 .progress-page-eyebrow {
   display: flex;
   flex-wrap: wrap;
@@ -6370,4 +6409,25 @@ body.session-keyboard-open .session-footer-inner.pre-answer .ghost-button {
   .mistake-notebook-heading { align-items: stretch; }
   .mistake-notebook-heading .primary-button { width: 100%; }
   .mistake-notebook-grid { grid-template-columns: 1fr; }
+}
+
+
+/* Blisko 1.8: single-language explanation switch */
+@media (max-width: 760px) {
+  .language-flag-button {
+    min-width: 45px;
+    width: 45px;
+    height: 35px;
+    padding: 0;
+  }
+  .language-flag-button strong { display: none; }
+}
+
+@media (max-width: 390px) {
+  .language-flag-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
 }

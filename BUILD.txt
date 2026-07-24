@@ -1,8 +1,9 @@
-Blisko 1.8 single-language explanations
+Blisko 1.8.1 complete Dutch/English interface
 Includes the 1.4.2 smooth-interaction fix: lesson answers and word tiles do not rebuild the full-screen lesson modal
 Preserves the 1.5 editable family profiles and branching family conversations
 Preserves the 1.6 corpus of 250 practical words and 82 contextual phrases
 Preserves the 1.7 error-aware learner model, Error Notebook, Fix my mistakes sessions, and 14 sentence patterns
-Adds a persistent Dutch/English flag switch in the top-right corner
-Shows translations, hints, tutor replies, grammar notes, feedback, word details, and sentence-pattern explanations in one selected language only
-Migrates legacy language settings into schema 8 without deleting progress, profiles, conversations, or review history
+Preserves the 1.8 persistent Dutch/English flag switch
+Extends the language switch to the complete interface: navigation, settings, buttons, games, diagnostics, progress, dialogs, notifications, dynamic counters, tutor UI, and accessibility labels
+Keeps Polish learning material unchanged while switching every support-language string between Dutch and English
+Uses the same schema 8 learner data, so progress, profiles, conversations, reviews, and settings are preserved

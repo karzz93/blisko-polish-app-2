@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.8';
+} from './data.js?v=1.8.1';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.8';
+} from './storage.js?v=1.8.1';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -66,8 +66,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.8';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.8';
+} from './engine.js?v=1.8.1';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.8.1';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -76,7 +76,13 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.8';
+} from './polish.js?v=1.8.1';
+import {
+  localizeTree,
+  startLocalizationObserver,
+  registerPolishTexts,
+  translateUiText,
+} from './i18n.js?v=1.8.1';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -151,15 +157,24 @@ const ratio = (value, total) => total ? Math.round((Number(value || 0) / Number(
 
 const percent = (value) => `${Math.round((Number(value) || 0) * 100)}%`;
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
-const formatNumber = (value) => new Intl.NumberFormat('en-NL').format(value || 0);
+const formatNumber = (value) => new Intl.NumberFormat(explanationLanguage() === 'nl' ? 'nl-NL' : 'en-NL').format(value || 0);
 const formatDateRelative = (iso) => {
-  if (!iso) return 'New';
+  if (!iso) return explanationLanguage() === 'nl' ? 'Nieuw' : 'New';
   const diff = new Date(iso).getTime() - Date.now();
   const absolute = Math.abs(diff);
-  if (absolute < 60_000) return diff <= 0 ? 'Now' : 'In a moment';
-  if (absolute < 3_600_000) return `${diff < 0 ? '' : 'in '}${Math.round(absolute / 60_000)} min${diff < 0 ? ' ago' : ''}`;
-  if (absolute < 86_400_000) return `${diff < 0 ? '' : 'in '}${Math.round(absolute / 3_600_000)} hr${diff < 0 ? ' ago' : ''}`;
-  return `${diff < 0 ? '' : 'in '}${Math.round(absolute / 86_400_000)} d${diff < 0 ? ' ago' : ''}`;
+  const future = diff > 0;
+  const language = explanationLanguage();
+  if (absolute < 60_000) return language === 'nl' ? (future ? 'Over een moment' : 'Nu') : (future ? 'In a moment' : 'Now');
+  if (absolute < 3_600_000) {
+    const amount = Math.round(absolute / 60_000);
+    return language === 'nl' ? (future ? `over ${amount} min` : `${amount} min geleden`) : (future ? `in ${amount} min` : `${amount} min ago`);
+  }
+  if (absolute < 86_400_000) {
+    const amount = Math.round(absolute / 3_600_000);
+    return language === 'nl' ? (future ? `over ${amount} uur` : `${amount} uur geleden`) : (future ? `in ${amount} hr` : `${amount} hr ago`);
+  }
+  const amount = Math.round(absolute / 86_400_000);
+  return language === 'nl' ? (future ? `over ${amount} d` : `${amount} d geleden`) : (future ? `in ${amount} d` : `${amount} d ago`);
 };
 
 let state;
@@ -209,6 +224,29 @@ const secondaryTranslation = () => '';
 const explanationText = (en = '', nl = '') => explanationLanguage() === 'nl' ? (nl || en || '') : (en || nl || '');
 const explanationCode = () => explanationLanguage() === 'nl' ? 'NL' : 'EN';
 const explanationFlag = () => explanationLanguage() === 'nl' ? '🇳🇱' : '🇬🇧';
+const uiText = (english = '') => translateUiText(english, explanationLanguage());
+const applyUiLocalization = (root = document) => localizeTree(root, explanationLanguage());
+
+const registeredPolishTexts = [
+  ...WORDS.flatMap((item) => [item.pl, item.example]),
+  ...PHRASES.map((item) => item.pl),
+  ...RESCUE_PHRASES.map((item) => item.pl),
+  ...PATTERNS.flatMap((pattern) => [
+    pattern.template,
+    ...Object.values(pattern.slots || {}).flatMap((options) => options.map((option) => option.value)),
+  ]),
+  ...Object.values(CONVERSATIONS).flatMap((conversation) => (conversation.turns || []).flatMap((turn) => [
+    turn.role,
+    ...(turn.suggestions || []).flatMap((suggestion) => [suggestion.starter, suggestion.pl, ...(suggestion.alternatives || []), suggestion.followUp?.role]),
+  ])),
+  ...PLACEMENT_QUESTIONS.flatMap((question) => [question.audioText]),
+  ...SOUND_LESSONS.flatMap((lesson) => [
+    lesson.anchor,
+    lesson.audioText,
+    ...(lesson.examples || []).flatMap((example) => Array.isArray(example) ? [example[0]] : [example.pl, example.word, example.text]),
+  ]),
+].filter(Boolean);
+registerPolishTexts(registeredPolishTexts);
 
 
 const evaluationContextFor = (exercise = {}) => ({
@@ -232,7 +270,7 @@ const evaluateExerciseAnswer = (value, exercise = currentExercise()) => evaluate
 const formatDateTime = (iso) => {
   if (!iso) return 'Not yet';
   try {
-    return new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+    return new Intl.DateTimeFormat(explanationLanguage() === 'nl' ? 'nl-NL' : 'en-NL', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
   } catch {
     return iso;
   }
@@ -269,6 +307,7 @@ const showToast = (title, detail = '', iconName = 'check') => {
     <span><strong>${escapeHtml(title)}</strong>${detail ? `<span>${escapeHtml(detail)}</span>` : ''}</span>
   `;
   toastRoot.appendChild(toast);
+  applyUiLocalization(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(8px)';
@@ -436,6 +475,7 @@ const updateShell = () => {
 
   renderNavigation();
   updateConnectionStatus();
+  applyUiLocalization(document.querySelector('.app-shell'));
 };
 
 const setExplanationLanguage = (language, { announce = true } = {}) => {
@@ -446,6 +486,7 @@ const setExplanationLanguage = (language, { announce = true } = {}) => {
   save();
   updateShell();
   renderView();
+  applyUiLocalization(document.body);
   if (announce) {
     showToast(
       normalized === 'nl' ? 'Nederlands geselecteerd' : 'English selected',
@@ -479,6 +520,7 @@ const openModal = (content, { wide = false, label = 'Dialog' } = {}) => {
     </div>
   `;
   document.body.style.overflow = 'hidden';
+  applyUiLocalization(modalRoot);
   const focusTarget = modalRoot.querySelector('input, textarea, button, select');
   setTimeout(() => focusTarget?.focus(), 20);
 };
@@ -1077,6 +1119,7 @@ const renderView = () => {
   mainContent.innerHTML = (renderers[currentView] || renderDashboard)();
   mainContent.focus({ preventScroll: true });
   hydrateStaticIcons(mainContent);
+  applyUiLocalization(mainContent);
   if (currentView === 'talk') scrollChatToBottom();
   if (currentView === 'tutor') scrollTutorToBottom();
 };
@@ -1860,13 +1903,14 @@ const renderTutorExerciseHint = (exercise, key, exerciseState) => {
 };
 
 const renderTutorQuickCheck = (exercise, key) => {
+  const localizedPrompt = explanationText(exercise.promptEn || exercise.prompt || '', exercise.promptNl || '');
   const exerciseState = ensureTutorExerciseState(key);
   const studyingModel = exerciseState.level === 5 && exerciseState.recallPhase === 'study';
   const recallingModel = exerciseState.level === 5 && exerciseState.recallPhase === 'recall';
   const result = exerciseState.result;
   return `
     <div class="feedback-box tutor-quick-check ${exerciseState.answered ? (result?.correct ? 'correct' : 'wrong') : ''}">
-      <div class="tutor-check-head"><div><h4>Quick check</h4><p>${escapeHtml(exercise.prompt || '')}</p></div><span class="support-badge">adaptive support</span></div>
+      <div class="tutor-check-head"><div><h4>Quick check</h4><p>${escapeHtml(localizedPrompt)}</p></div><span class="support-badge">adaptive support</span></div>
       ${renderTutorExerciseHint(exercise, key, exerciseState)}
       ${studyingModel ? `
         <div class="hint-recall-card study tutor-recall-card">
@@ -1905,7 +1949,7 @@ const renderTutorQuickCheck = (exercise, key) => {
 
 const renderTutorReply = (reply, key = 'welcome') => `
   <div class="tutor-bubble">
-    <h4>${escapeHtml(reply.title || 'Tutor explanation')}</h4>
+    <h4>${escapeHtml(explanationText(reply.titleEn || reply.title || 'Tutor explanation', reply.titleNl || ''))}</h4>
     ${(reply.en || reply.nl) ? `<p class="tutor-language-primary"><strong>${explanationCode()}</strong> ${escapeHtml(explanationText(reply.en || '', reply.nl || ''))}</p>` : ''}
     ${(reply.examples || []).map((example) => `
       <div class="example-block">
@@ -3615,7 +3659,7 @@ const skipCurrentExercise = () => {
 const closeSession = ({ force = false } = {}) => {
   if (!session) return;
   const complete = session.index >= session.exercises.length;
-  if (!force && !complete && session.index > 0 && !window.confirm('End this session? Your completed reviews are already saved.')) return;
+  if (!force && !complete && session.index > 0 && !window.confirm(uiText('End this session? Your completed reviews are already saved.'))) return;
   if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
   if (session.recordingUrl) URL.revokeObjectURL(session.recordingUrl);
   session = null;
@@ -3775,12 +3819,13 @@ const getMatchingHintTarget = () => {
 const buildMatchingHint = (item, level) => {
   const meaning = primaryTranslation(item);
   const secondary = secondaryTranslation(item);
+  const dutchType = translateUiText(item.type || 'word', 'nl');
   const firstPl = [...String(item.pl || '')][0] || '';
   const firstMeaning = [...String(meaning || '')][0] || '';
   if (level === 1) return {
     level, title: 'Gentle nudge',
     en: `Look for a ${item.type || 'word'} pair. The Polish side begins with “${firstPl}”; the meaning begins with “${firstMeaning}”.`,
-    nl: `Zoek een paar met een ${item.type || 'woord'}. De Poolse kant begint met “${firstPl}”; de betekenis met “${firstMeaning}”.`,
+    nl: `Zoek een paar met een ${dutchType || 'woord'}. De Poolse kant begint met “${firstPl}”; de betekenis met “${firstMeaning}”.`,
   };
   if (level === 2) return {
     level, title: 'Pair structure',
@@ -3795,7 +3840,7 @@ const buildMatchingHint = (item, level) => {
   if (level === 4) return {
     level, title: 'Meaning in context',
     en: `${item.example ? `Picture the line “${item.example}”. ` : ''}Use the word as a ${item.type || 'conversation word'}, not as an isolated translation.`,
-    nl: `${item.example ? `Denk aan de zin “${item.example}”. ` : ''}Gebruik het als ${item.type || 'gesprekswoord'}, niet als losse vertaling.`,
+    nl: `${item.example ? `Denk aan de zin “${item.example}”. ` : ''}Gebruik het als ${dutchType || 'gesprekswoord'}, niet als losse vertaling.`,
   };
   return {
     level, title: 'Pair, then active recall',
@@ -4302,7 +4347,7 @@ const importBackupFile = async (file) => {
 };
 
 const resetLearningData = async () => {
-  if (!window.confirm('Reset all progress, tutor memory, and conversation history on this device? A local safety copy will be kept.')) return;
+  if (!window.confirm(uiText('Reset all progress, tutor memory, and conversation history on this device? A local safety copy will be kept.'))) return;
   await createSafetyBackup(state, 'before learning-data reset', APP_VERSION).catch(() => null);
   state = await resetState();
   state.system.installedVersion = APP_VERSION;
@@ -4410,7 +4455,7 @@ const restoreLatestLocalBackup = async () => {
     return;
   }
   const latest = backups[0];
-  if (!window.confirm(`Restore the safety copy from ${formatDateTime(latest.createdAt)}? Current changes made after that copy will be replaced.`)) return;
+  if (!window.confirm(uiText(`Restore the safety copy from ${formatDateTime(latest.createdAt)}? Current changes made after that copy will be replaced.`))) return;
   try {
     const restored = await restoreLatestSafetyBackup();
     restored.system = restored.system || {};
@@ -4462,7 +4507,7 @@ const clearCurrentAppCaches = async () => {
 };
 
 const repairAppCache = async () => {
-  if (!window.confirm('Repair downloaded app files? Your learning data will stay on this device.')) return;
+  if (!window.confirm(uiText('Repair downloaded app files? Your learning data will stay on this device.'))) return;
   try {
     await createSafetyBackup(state, 'before app-file repair', APP_VERSION);
     await save({ immediate: true });
@@ -5097,7 +5142,7 @@ const handleAction = (event) => {
       break;
     case 'placement-close': {
       const incomplete = placementSession && !placementSession.summary && placementSession.results.length > 0;
-      if (!incomplete || window.confirm('Leave this level check? Your answers in this unfinished check will not be saved.')) closePlacementTest();
+      if (!incomplete || window.confirm(uiText('Leave this level check? Your answers in this unfinished check will not be saved.'))) closePlacementTest();
       break;
     }
     case 'placement-finish':
@@ -5330,7 +5375,7 @@ const handleKeydown = (event) => {
     else if (session) closeSession();
     else if (placementSession) {
       const incomplete = !placementSession.summary && placementSession.results.length > 0;
-      if (!incomplete || window.confirm('Leave this level check? Your answers in this unfinished check will not be saved.')) closePlacementTest();
+      if (!incomplete || window.confirm(uiText('Leave this level check? Your answers in this unfinished check will not be saved.'))) closePlacementTest();
     } else if (modalRoot.innerHTML) closeModal();
     return;
   }
@@ -5468,12 +5513,14 @@ const initialize = async () => {
   });
 
   setupVisualViewport();
+  startLocalizationObserver(explanationLanguage);
   hydrateStaticIcons(document);
   updateShell();
   renderView();
   setupInstallPrompt();
   registerServiceWorker();
   updateConnectionStatus();
+  applyUiLocalization(document.body);
   document.documentElement.dataset.bliskoReady = 'true';
   markStartupHealthy(state, APP_VERSION).catch(() => false);
 

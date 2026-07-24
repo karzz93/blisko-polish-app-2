@@ -1,4 +1,4 @@
-const BUILD = '1.8';
+const BUILD = '1.8.1';
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
 const SCOPE_KEY = SCOPE_PATH
   .replace(/^\/+|\/+$/g, '')
@@ -20,6 +20,7 @@ const APP_SHELL = [
   `./engine.js?${VERSION_QUERY}`,
   `./tutor.js?${VERSION_QUERY}`,
   `./polish.js?${VERSION_QUERY}`,
+  `./i18n.js?${VERSION_QUERY}`,
   `./app.js?${VERSION_QUERY}`,
   `./icon.svg?${VERSION_QUERY}`,
   `./icon-192.png?${VERSION_QUERY}`,

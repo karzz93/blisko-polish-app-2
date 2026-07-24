@@ -1,5 +1,5 @@
-import { TUTOR_TOPICS, GRAMMAR_CONCEPTS, PHRASES, WORDS, PATTERNS } from './data.js?v=1.8';
-import { normalizeText, similarity, getWeakItems, getMetrics } from './engine.js?v=1.8';
+import { TUTOR_TOPICS, GRAMMAR_CONCEPTS, PHRASES, WORDS, PATTERNS } from './data.js?v=1.8.1';
+import { normalizeText, similarity, getWeakItems, getMetrics } from './engine.js?v=1.8.1';
 
 const STOP_WORDS = new Set([
   // English
@@ -271,8 +271,8 @@ const directVocabularyReply = (message) => {
       return {
         mode: 'local',
         title: `${entry.pl} — meaning and use`,
-        en: `It means “${entry.en}”. The Dutch equivalent is “${entry.nl}”.`,
-        nl: `Het betekent “${entry.nl}”. De Engelse vertaling is “${entry.en}”.`,
+        en: `It means “${entry.en}”.`,
+        nl: `Het betekent “${entry.nl}”.`,
         examples: [[entry.pl, entry.nl, entry.en]],
         exercise: null,
       };
@@ -408,16 +408,18 @@ export const cloudTutorReply = async (message, state, signal) => {
       instructions: [
         'Answer the exact question before adding related teaching.',
         'If the question is ambiguous, ask one short clarification instead of guessing.',
-        'Use English as the primary explanation and Dutch as secondary support.',
+        'Return English and Dutch in separate fields. Never combine both support languages in one field.',
+        `The learner currently selected ${state.settings.explanationLanguage === 'nl' ? 'Dutch' : 'English'} as the visible support language.`,
         'Never answer a different pronunciation or grammar topic merely because one letter overlaps.',
       ],
       weakItems,
       responseFormat: {
-        title: 'string',
-        en: 'Primary English explanation',
-        nl: 'Secondary Dutch explanation',
+        titleEn: 'English title',
+        titleNl: 'Dutch title',
+        en: 'English explanation only',
+        nl: 'Dutch explanation only',
         examples: [['Polish', 'Dutch', 'English']],
-        exercise: { prompt: 'string', answer: 'string', options: ['string'] },
+        exercise: { promptEn: 'English prompt', promptNl: 'Dutch prompt', answer: 'Polish answer', options: ['Polish option'] },
       },
     }),
     signal,

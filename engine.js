@@ -5,9 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.8';
-import { getTodayKey } from './storage.js?v=1.8';
-import { explainPolishDifference } from './polish.js?v=1.8';
+} from './data.js?v=1.8.1';
+import { getTodayKey } from './storage.js?v=1.8.1';
+import { explainPolishDifference } from './polish.js?v=1.8.1';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;

@@ -1,14 +1,12 @@
-BLISKO 1.8 - SINGLE-LANGUAGE EXPLANATIONS
+BLISKO 1.8.1 - COMPLETE INTERFACE LOCALISATION
 
 Upload every file in this folder together. Do not mix files from older builds.
-The app preserves learner progress in browser storage and creates a safety copy before migration.
 
-Version 1.8 adds:
-- a persistent 🇳🇱 / 🇬🇧 language flag in the top-right corner;
-- one selected explanation language throughout the app instead of Dutch and English together;
-- single-language translations in exercises, tutor replies, conversations, hints, feedback, word details, grammar notes, sound lessons, and sentence patterns;
-- a matching language selector in Coach settings;
-- schema 8 migration that converts older language toggles without deleting progress;
-- all vocabulary, family-profile, conversation, adaptive-practice, Error Notebook, and smooth-interaction improvements from versions 1.4.2 through 1.7.
+Version 1.8.1 adds:
+- Complete Dutch interface when the Dutch flag is active
+- Complete English interface when the English flag is active
+- Polish words, sentences, audio text, and answer material remain Polish
+- Localised navigation, buttons, settings, games, progress, dialogs, notifications, counters, and accessibility labels
+- All existing learning progress remains compatible through schema 8
 
-After deployment, open the hosted app once while online. The service worker will install the verified 1.8 shell and perform one controlled restart if needed.
+After deployment, open the hosted app once while online. The service worker installs the verified 1.8.1 shell and performs one controlled restart if needed.

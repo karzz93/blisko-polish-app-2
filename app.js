@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.8.1';
+} from './data.js?v=1.8.2';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.8.1';
+} from './storage.js?v=1.8.2';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -66,8 +66,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.8.1';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.8.1';
+} from './engine.js?v=1.8.2';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.8.2';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -76,13 +76,13 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.8.1';
+} from './polish.js?v=1.8.2';
 import {
   localizeTree,
   startLocalizationObserver,
   registerPolishTexts,
   translateUiText,
-} from './i18n.js?v=1.8.1';
+} from './i18n.js?v=1.8.2';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -1583,6 +1583,41 @@ function renderReview() {
 }
 
 const FAMILY_PERSONA_IDS = new Set(['mother-in-law', 'father-in-law', 'grandmother']);
+const FAMILY_PROFILE_DEFAULT_TEXT = {
+  'mother-in-law': {
+    name: { en: 'Mother-in-law', nl: 'Schoonmoeder' },
+    relation: { en: 'mother-in-law', nl: 'schoonmoeder' },
+    topics: { en: 'food, travel, family news', nl: 'eten, reizen, familienieuws' },
+    upcomingOccasion: { en: 'next family visit', nl: 'volgend familiebezoek' },
+  },
+  'father-in-law': {
+    name: { en: 'Father-in-law', nl: 'Schoonvader' },
+    relation: { en: 'father-in-law', nl: 'schoonvader' },
+    topics: { en: 'work, motorsport, hobbies', nl: "werk, motorsport, hobby's" },
+    upcomingOccasion: { en: 'coffee or dinner together', nl: 'samen koffie drinken of dineren' },
+  },
+  grandmother: {
+    name: { en: 'Grandmother', nl: 'Oma' },
+    relation: { en: 'grandmother', nl: 'oma' },
+    topics: { en: 'food, health, holidays', nl: 'eten, gezondheid, feestdagen' },
+    upcomingOccasion: { en: 'family dinner or Christmas', nl: 'familiediner of Kerstmis' },
+  },
+};
+
+const localizeFamilyProfileField = (personaId, field, value = '') => {
+  const pair = FAMILY_PROFILE_DEFAULT_TEXT[personaId]?.[field];
+  if (!pair) return value;
+  const current = String(value || '').trim();
+  if (!current || current === pair.en || current === pair.nl) return pair[explanationLanguage()];
+  return value;
+};
+
+const canonicalizeFamilyProfileField = (personaId, field, value = '') => {
+  const pair = FAMILY_PROFILE_DEFAULT_TEXT[personaId]?.[field];
+  const current = String(value || '').trim();
+  if (pair && (current === pair.en || current === pair.nl)) return pair.en;
+  return current;
+};
 const FAMILY_CONVERSATION_SCRIPT_VERSION = 'family-1.5';
 const COMPATIBLE_FAMILY_SCRIPT_VERSIONS = new Set(['1.5', '1.6', FAMILY_CONVERSATION_SCRIPT_VERSION]);
 
@@ -1597,12 +1632,19 @@ const familyProfileFor = (personaOrId) => {
         ? state.profile.familyNames?.grandmother
         : '';
   const saved = state.profile.familyProfiles?.[personaId] || {};
-  return {
+  const raw = {
     name: saved.name || legacyName || persona?.name || 'Family member',
     relation: saved.relation || persona?.name || 'family member',
     topics: saved.topics || '',
     commonQuestion: saved.commonQuestion || '',
     upcomingOccasion: saved.upcomingOccasion || '',
+  };
+  return {
+    ...raw,
+    name: localizeFamilyProfileField(personaId, 'name', raw.name),
+    relation: localizeFamilyProfileField(personaId, 'relation', raw.relation),
+    topics: localizeFamilyProfileField(personaId, 'topics', raw.topics),
+    upcomingOccasion: localizeFamilyProfileField(personaId, 'upcomingOccasion', raw.upcomingOccasion),
   };
 };
 
@@ -4280,11 +4322,11 @@ const saveSettings = () => {
   familyFields.forEach(([personaId, fieldKey, fallbackName]) => {
     const previous = familyProfileFor(personaId);
     state.profile.familyProfiles[personaId] = {
-      name: document.getElementById(`family-${fieldKey}-name`)?.value.trim() || fallbackName,
-      relation: document.getElementById(`family-${fieldKey}-relation`)?.value.trim() || previous.relation,
-      topics: document.getElementById(`family-${fieldKey}-topics`)?.value.trim() || previous.topics,
+      name: canonicalizeFamilyProfileField(personaId, 'name', document.getElementById(`family-${fieldKey}-name`)?.value || fallbackName) || fallbackName,
+      relation: canonicalizeFamilyProfileField(personaId, 'relation', document.getElementById(`family-${fieldKey}-relation`)?.value || previous.relation) || previous.relation,
+      topics: canonicalizeFamilyProfileField(personaId, 'topics', document.getElementById(`family-${fieldKey}-topics`)?.value || previous.topics) || previous.topics,
       commonQuestion: document.getElementById(`family-${fieldKey}-question`)?.value.trim() || previous.commonQuestion,
-      upcomingOccasion: document.getElementById(`family-${fieldKey}-occasion`)?.value.trim() || previous.upcomingOccasion,
+      upcomingOccasion: canonicalizeFamilyProfileField(personaId, 'upcomingOccasion', document.getElementById(`family-${fieldKey}-occasion`)?.value || previous.upcomingOccasion) || previous.upcomingOccasion,
     };
   });
   state.profile.familyNames.motherInLaw = state.profile.familyProfiles['mother-in-law'].name;

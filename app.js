@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.8.2';
+} from './data.js?v=1.9';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.8.2';
+} from './storage.js?v=1.9';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -66,8 +66,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.8.2';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.8.2';
+} from './engine.js?v=1.9';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.9';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -76,13 +76,13 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.8.2';
+} from './polish.js?v=1.9';
 import {
   localizeTree,
   startLocalizationObserver,
   registerPolishTexts,
   translateUiText,
-} from './i18n.js?v=1.8.2';
+} from './i18n.js?v=1.9';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -1143,21 +1143,37 @@ function renderDashboard() {
   const placementLevel = placement.estimatedLevel === 'Pre-A1' ? 'A0' : placement.estimatedLevel;
   const placementCompleted = Boolean(placement.completedAt);
   const placementMode = placementCompleted ? 'recalibration' : 'placement';
+  const topicTitle = uiText(recommended.title);
+  const nextScenarioTitle = uiText(nextScenario.scenario.title);
+  const localizedInsights = insights.map((insight) => ({
+    title: explanationText(insight.title, insight.nlTitle || uiText(insight.title)),
+    detail: explanationText(insight.detail, insight.nlDetail || uiText(insight.detail)),
+  }));
+
+  const heroPriority = explanationLanguage() === 'nl'
+    ? `Je coach focust op ${topicTitle.toLowerCase()}, zinnen om vastgelopen gesprekken te redden en patronen die je helpen bij je volgende echte gesprek.`
+    : `Your coach is prioritizing ${recommended.title.toLowerCase()}, conversation rescue phrases, and the patterns most likely to unlock your next real exchange.`;
+  const dueSummary = explanationLanguage() === 'nl'
+    ? `${dueCount} onderdelen moeten worden herhaald voordat de coach zorgvuldig gekozen nieuw materiaal toevoegt.`
+    : `${dueCount} memories are due before the coach adds carefully chosen new material.`;
+  const estimateSummary = explanationLanguage() === 'nl'
+    ? `Deze schatting wordt bijgewerkt op basis van spreekpogingen, geheugenstabiliteit en gereedheid voor situaties. Met ${goal} gerichte minuten per dag is je eerstvolgende bereikbare situatie “${nextScenarioTitle}”.`
+    : `This estimate updates from speaking attempts, memory stability, and scenario readiness. At ${goal} focused minutes per day, your next closest scenario is “${nextScenario.scenario.title}”.`;
 
   return `
     <div class="view section-stack">
       <section class="hero-grid">
         <article class="card hero-card">
           <div class="hero-copy">
-            <span class="hero-kicker">Built for your family conversations</span>
-            <h2>Cześć, ${escapeHtml(state.profile.name)}. Learn what you will <em>actually say.</em></h2>
-            <p>Your coach is prioritizing ${escapeHtml(recommended.title.toLowerCase())}, conversation rescue phrases, and the patterns most likely to unlock your next real exchange.</p>
+            <span class="hero-kicker">${escapeHtml(explanationText('Built for your family conversations', 'Gebouwd voor gesprekken met je familie'))}</span>
+            <h2><span lang="pl">Cześć</span>, ${escapeHtml(state.profile.name)}. ${escapeHtml(explanationText('Learn what you will', 'Leer wat je echt gaat'))} <em>${escapeHtml(explanationText('actually say.', 'zeggen.'))}</em></h2>
+            <p>${escapeHtml(heroPriority)}</p>
             <div class="hero-actions">
               <button class="primary-button lime" type="button" data-action="start-session" data-mode="smart">
-                ${icon('play')} Start smart session · ${remaining || 5} min
+                ${icon('play')} ${escapeHtml(explanationText('Start smart session', 'Slimme sessie starten'))} · ${remaining || 5} min
               </button>
               <button class="secondary-button" type="button" data-action="go-view" data-view="talk">
-                ${icon('message')} Talk to family
+                ${icon('message')} ${escapeHtml(explanationText('Talk to family', 'Met familie praten'))}
               </button>
             </div>
           </div>
@@ -1165,7 +1181,7 @@ function renderDashboard() {
             <div class="readiness-orbit" style="--readiness:${Math.max(4, Math.round(readiness * 100))}%">
               <div class="orbit-content">
                 <strong>${Math.round(readiness * 100)}%</strong>
-                <span>family conversation readiness</span>
+                <span>${escapeHtml(explanationText('family conversation readiness', 'gereedheid voor familiegesprekken'))}</span>
               </div>
               <span class="orbit-person one">👩</span>
               <span class="orbit-person two">👵</span>
@@ -1176,30 +1192,34 @@ function renderDashboard() {
 
         <article class="card today-card">
           <div class="card-kicker">
-            <span>Today’s shortest path</span>
-            <span class="soft-pill">Adaptive</span>
+            <span>${escapeHtml(explanationText('Today’s shortest path', 'De kortste route voor vandaag'))}</span>
+            <span class="soft-pill">${escapeHtml(explanationText('Adaptive', 'Adaptief'))}</span>
           </div>
-          <h3>${dueCount ? 'Protect what you know' : 'Build your first speaking blocks'}</h3>
-          <p>${dueCount ? `${dueCount} memories are due before the coach adds carefully chosen new material.` : 'A compact session mixing useful phrases, listening, and one sentence pattern.'}</p>
+          <h3>${escapeHtml(dueCount
+            ? explanationText('Protect what you know', 'Bescherm wat je al kent')
+            : explanationText('Build your first speaking blocks', 'Bouw je eerste spreekblokken'))}</h3>
+          <p>${escapeHtml(dueCount
+            ? dueSummary
+            : explanationText('A compact session mixing useful phrases, listening, and one sentence pattern.', 'Een compacte sessie met bruikbare zinnen, luisteren en één zinspatroon.'))}</p>
           <div class="path-list">
             <div class="path-step">
               <span class="path-step-icon">${icon('repeat')}</span>
-              <span class="path-step-copy"><strong>${dueCount || 2} memory checks</strong><span>Only weak or valuable items</span></span>
+              <span class="path-step-copy"><strong>${dueCount || 2} ${escapeHtml(explanationText('memory checks', 'geheugencontroles'))}</strong><span>${escapeHtml(explanationText('Only weak or valuable items', 'Alleen zwakke of waardevolle onderdelen'))}</span></span>
               <span>2 min</span>
             </div>
             <div class="path-step">
               <span class="path-step-icon">${icon('sparkles')}</span>
-              <span class="path-step-copy"><strong>${escapeHtml(recommended.title)}</strong><span>One reusable sentence pattern</span></span>
+              <span class="path-step-copy"><strong>${escapeHtml(topicTitle)}</strong><span>${escapeHtml(explanationText('One reusable sentence pattern', 'Eén herbruikbaar zinspatroon'))}</span></span>
               <span>4 min</span>
             </div>
             <div class="path-step">
               <span class="path-step-icon">${icon('mic')}</span>
-              <span class="path-step-copy"><strong>Say it before you see it</strong><span>Private, local recording</span></span>
+              <span class="path-step-copy"><strong>${escapeHtml(explanationText('Say it before you see it', 'Zeg het voordat je het ziet'))}</strong><span>${escapeHtml(explanationText('Private, local recording', 'Privé, lokale opname'))}</span></span>
               <span>2 min</span>
             </div>
           </div>
           <button class="primary-button" type="button" data-action="start-session" data-mode="smart">
-            Begin today’s path ${icon('arrow')}
+            ${escapeHtml(explanationText('Begin today’s path', 'Start het leerpad van vandaag'))} ${icon('arrow')}
           </button>
         </article>
       </section>
@@ -1207,40 +1227,52 @@ function renderDashboard() {
       <section class="card calibration-banner ${metrics.recalibrationDue ? 'needs-check' : ''}">
         <span class="calibration-banner-icon">${icon('target')}</span>
         <div class="calibration-banner-copy">
-          <span class="progress-overline">${placementCompleted ? 'PERSONAL LEVEL CALIBRATION' : 'START WITH WHAT YOU ALREADY KNOW'}</span>
-          <h3>${placementCompleted ? `Current evidence: ${escapeHtml(placementLevel || metrics.cefr)} · ${Math.round(metrics.evidenceConfidence * 100)}% confidence` : 'Take a short level check before Blisko decides what is easy or hard.'}</h3>
+          <span class="progress-overline">${escapeHtml(placementCompleted
+            ? explanationText('PERSONAL LEVEL CALIBRATION', 'PERSOONLIJKE NIVEAUKALIBRATIE')
+            : explanationText('START WITH WHAT YOU ALREADY KNOW', 'BEGIN MET WAT JE AL KENT'))}</span>
+          <h3>${placementCompleted
+            ? `${escapeHtml(explanationText('Current evidence', 'Huidig bewijs'))}: ${escapeHtml(placementLevel || metrics.cefr)} · ${Math.round(metrics.evidenceConfidence * 100)}% ${escapeHtml(explanationText('confidence', 'zekerheid'))}`
+            : escapeHtml(explanationText('Take a short level check before Blisko decides what is easy or hard.', 'Doe eerst een korte niveaucontrole voordat Blisko bepaalt wat makkelijk of moeilijk is.'))}</h3>
           <p>${placementCompleted
-            ? `${metrics.recalibrationDue ? 'Your last check is ready to be refreshed.' : `Last calibrated ${formatDateRelative(placement.completedAt)}.`} Daily practice still has more weight than the diagnostic.`
-            : 'Eleven compact checks measure reading, listening, guided and free production, grammar, and pronunciation confidence.'}</p>
+            ? `${escapeHtml(metrics.recalibrationDue
+              ? explanationText('Your last check is ready to be refreshed.', 'Je laatste niveaucontrole kan worden vernieuwd.')
+              : explanationLanguage() === 'nl'
+                ? `Voor het laatst gekalibreerd ${formatDateRelative(placement.completedAt)}.`
+                : `Last calibrated ${formatDateRelative(placement.completedAt)}.`)} ${escapeHtml(explanationText('Daily practice still has more weight than the diagnostic.', 'Dagelijkse oefening telt nog steeds zwaarder dan de niveaumeting.'))}`
+            : escapeHtml(explanationText('Eleven compact checks measure reading, listening, guided and free production, grammar, and pronunciation confidence.', 'Elf korte controles meten lezen, luisteren, begeleide en vrije productie, grammatica en vertrouwen in je uitspraak.'))}</p>
         </div>
         <button class="${placementCompleted && !metrics.recalibrationDue ? 'secondary-button' : 'primary-button'} calibration-banner-action" type="button" data-action="open-placement" data-mode="${placementMode}">
-          ${placementCompleted ? (metrics.recalibrationDue ? 'Recalibrate level' : 'Check level again') : 'Start 4-minute check'} ${icon('arrow')}
+          ${escapeHtml(placementCompleted
+            ? (metrics.recalibrationDue
+              ? explanationText('Recalibrate level', 'Niveau opnieuw kalibreren')
+              : explanationText('Check level again', 'Niveau opnieuw controleren'))
+            : explanationText('Start 4-minute check', 'Start controle van 4 minuten'))} ${icon('arrow')}
         </button>
       </section>
 
       <section class="metric-grid">
         <button class="card metric-card" type="button" data-action="go-view" data-view="library">
-          <div class="metric-head"><span class="metric-icon">${icon('book')}</span><span class="metric-trend">active recall</span></div>
+          <div class="metric-head"><span class="metric-icon">${icon('book')}</span><span class="metric-trend">${escapeHtml(explanationText('active recall', 'actief ophalen'))}</span></div>
           <strong class="metric-value">${formatNumber(metrics.masteredWords)}</strong>
-          <p>words ready to use</p>
+          <p>${escapeHtml(explanationText('words ready to use', 'woorden klaar voor gebruik'))}</p>
           <div class="progress-track"><span style="width:${Math.min(100, metrics.masteredWords)}%"></span></div>
         </button>
         <button class="card metric-card" type="button" data-action="go-view" data-view="progress">
-          <div class="metric-head"><span class="metric-icon">${icon('brain')}</span><span class="metric-trend">patterns, not tables</span></div>
+          <div class="metric-head"><span class="metric-icon">${icon('brain')}</span><span class="metric-trend">${escapeHtml(explanationText('patterns, not tables', 'patronen, geen tabellen'))}</span></div>
           <strong class="metric-value">${Math.round(metrics.grammarMastery * 100)}%</strong>
-          <p>grammar pattern mastery</p>
+          <p>${escapeHtml(explanationText('grammar pattern mastery', 'beheersing van grammaticapatronen'))}</p>
           <div class="progress-track"><span style="width:${Math.round(metrics.grammarMastery * 100)}%"></span></div>
         </button>
         <button class="card metric-card" type="button" data-action="go-view" data-view="talk">
-          <div class="metric-head"><span class="metric-icon">${icon('message')}</span><span class="metric-trend">real scenarios</span></div>
+          <div class="metric-head"><span class="metric-icon">${icon('message')}</span><span class="metric-trend">${escapeHtml(explanationText('real scenarios', 'echte situaties'))}</span></div>
           <strong class="metric-value">${metrics.unlockedConversations}</strong>
-          <p>conversations you can handle</p>
+          <p>${escapeHtml(explanationText('conversations you can handle', 'gesprekken die je aankunt'))}</p>
           <div class="progress-track"><span style="width:${Math.min(100, metrics.unlockedConversations / REAL_LIFE_SCENARIOS.length * 100)}%"></span></div>
         </button>
         <button class="card metric-card" type="button" data-action="go-view" data-view="progress">
-          <div class="metric-head"><span class="metric-icon">${icon('flag')}</span><span class="metric-trend">conservative estimate</span></div>
+          <div class="metric-head"><span class="metric-icon">${icon('flag')}</span><span class="metric-trend">${escapeHtml(explanationText('conservative estimate', 'voorzichtige schatting'))}</span></div>
           <strong class="metric-value">${metrics.cefr}</strong>
-          <p>estimated CEFR level</p>
+          <p>${escapeHtml(explanationText('estimated CEFR level', 'geschat CEFR-niveau'))}</p>
           <div class="progress-track"><span style="width:${Math.round(metrics.cefrProgress * 100)}%"></span></div>
         </button>
       </section>
@@ -1250,14 +1282,19 @@ function renderDashboard() {
           <div class="coach-top">
             <span class="coach-avatar">B</span>
             <div class="coach-copy">
-              <div class="coach-label">What your coach noticed</div>
-              <h3>${state.stats.reviews ? 'Your next session has already changed.' : 'Your curriculum starts with leverage, not alphabet drills.'}</h3>
-              <p>Blisko weighs memory strength, conversation value, grammar friction, and your interests every time it chooses the next exercise.</p>
-              <button class="text-button" type="button" data-action="go-view" data-view="tutor">Ask why something works ${icon('arrow')}</button>
+              <div class="coach-label">${escapeHtml(explanationText('What your coach noticed', 'Wat je coach heeft opgemerkt'))}</div>
+              <h3>${escapeHtml(state.stats.reviews
+                ? explanationText('Your next session has already changed.', 'Je volgende sessie is al aangepast.')
+                : explanationText('Your curriculum starts with leverage, not alphabet drills.', 'Je leerroute begint met bruikbare taal, niet met alfabetrijtjes.'))}</h3>
+              <p>${escapeHtml(explanationText(
+                'Blisko weighs memory strength, conversation value, grammar friction, and your interests every time it chooses the next exercise.',
+                'Blisko weegt geheugensterkte, gesprekswaarde, grammaticaknelling en je interesses mee wanneer de volgende oefening wordt gekozen.'
+              ))}</p>
+              <button class="text-button" type="button" data-action="go-view" data-view="tutor">${escapeHtml(explanationText('Ask why something works', 'Vraag waarom iets zo werkt'))} ${icon('arrow')}</button>
             </div>
           </div>
           <div class="insight-list">
-            ${insights.map((insight, index) => `
+            ${localizedInsights.map((insight, index) => `
               <div class="insight-row">
                 <span class="insight-bullet">${index + 1}</span>
                 <p>${escapeHtml(insight.title)}<span>${escapeHtml(insight.detail)}</span></p>
@@ -1268,8 +1305,8 @@ function renderDashboard() {
 
         <article class="card pattern-card" id="dashboard-pattern-card">
           <div class="pattern-header">
-            <span class="pattern-label">Sentence pattern of the day</span>
-            <button class="speaker-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}" aria-label="Listen to ${escapeHtml(sentence)}">${icon('volume')}</button>
+            <span class="pattern-label">${escapeHtml(explanationText('Sentence pattern of the day', 'Zinspatroon van de dag'))}</span>
+            <button class="speaker-button" type="button" data-action="speak" data-text="${escapeHtml(sentence)}" aria-label="${escapeHtml(explanationText(`Listen to ${sentence}`, `Luister naar ${sentence}`))}">${icon('volume')}</button>
           </div>
           <div class="pattern-sentence" lang="pl">${polishInteractive(sentence)}</div>
           <div class="pattern-translation">${explanationCode()} ${escapeHtml(translation)}</div>
@@ -1284,8 +1321,8 @@ function renderDashboard() {
 
       <section>
         <div class="section-heading">
-          <div><h2>Your conversation map</h2><p>Readiness is tracked by person and situation, not by meaningless XP.</p></div>
-          <button class="text-button" type="button" data-action="go-view" data-view="progress">Full progress ${icon('arrow')}</button>
+          <div><h2>${escapeHtml(explanationText('Your conversation map', 'Jouw gesprekskaart'))}</h2><p>${escapeHtml(explanationText('Readiness is tracked by person and situation, not by meaningless XP.', 'Je gereedheid wordt bijgehouden per persoon en situatie, niet met betekenisloze XP.'))}</p></div>
+          <button class="text-button" type="button" data-action="go-view" data-view="progress">${escapeHtml(explanationText('Full progress', 'Volledige voortgang'))} ${icon('arrow')}</button>
         </div>
         <div class="family-strip">
           ${PERSONAS.map((persona) => {
@@ -1294,8 +1331,8 @@ function renderDashboard() {
               <button class="person-card" type="button" data-action="open-persona" data-persona="${persona.id}">
                 <span class="person-avatar">${persona.emoji}<span class="person-level-dot" style="opacity:${Math.max(.25, score)}"></span></span>
                 <span class="person-copy">
-                  <strong>${escapeHtml(persona.name)}</strong>
-                  <span>${escapeHtml(persona.scenario)}</span>
+                  <strong>${escapeHtml(uiText(persona.name))}</strong>
+                  <span>${escapeHtml(uiText(persona.scenario))}</span>
                   <span class="person-progress"><span class="progress-track"><span style="width:${Math.round(score * 100)}%"></span></span><b>${Math.round(score * 100)}%</b></span>
                 </span>
               </button>
@@ -1306,11 +1343,13 @@ function renderDashboard() {
 
       <section class="page-intro card">
         <div>
-          <p class="eyebrow">A MOTIVATING NUMBER THAT MATTERS</p>
-          <h2>${metrics.estimatedWeeks ? `About ${metrics.estimatedWeeks} weeks until comfortable family small talk.` : 'You have reached the comfortable small-talk target.'}</h2>
-          <p>This estimate updates from speaking attempts, memory stability, and scenario readiness. At ${goal} focused minutes per day, your next closest scenario is “${escapeHtml(nextScenario.scenario.title)}”.</p>
+          <p class="eyebrow">${escapeHtml(explanationText('A MOTIVATING NUMBER THAT MATTERS', 'EEN MOTIVEREND GETAL DAT ERTOE DOET'))}</p>
+          <h2>${escapeHtml(metrics.estimatedWeeks
+            ? explanationText(`About ${metrics.estimatedWeeks} weeks until comfortable family small talk.`, `Nog ongeveer ${metrics.estimatedWeeks} weken tot ontspannen gesprekjes met familie.`)
+            : explanationText('You have reached the comfortable small-talk target.', 'Je hebt het doel voor ontspannen gesprekjes bereikt.'))}</h2>
+          <p>${escapeHtml(estimateSummary)}</p>
         </div>
-        <div class="intro-stat"><strong>${Math.round(nextScenario.score * 100)}%</strong><span>closest scenario readiness</span></div>
+        <div class="intro-stat"><strong>${Math.round(nextScenario.score * 100)}%</strong><span>${escapeHtml(explanationText('closest scenario readiness', 'gereedheid voor dichtstbijzijnde situatie'))}</span></div>
       </section>
     </div>
   `;
@@ -1340,6 +1379,12 @@ function renderLearn() {
           <div><h2>Your next best moves</h2><p>The order changes as the coach learns where you hesitate.</p></div>
         </div>
         <div class="focus-grid">
+          <button class="card focus-card beginner-basics-card" type="button" data-action="start-beginner-basics" style="--focus:var(--green);--focus-soft:var(--green-soft)">
+            <span class="focus-icon">${icon('sparkles')}</span>
+            <h3>${escapeHtml(explanationText('Beginner basics', 'Basis voor beginners'))}</h3>
+            <p>${escapeHtml(explanationText('Short everyday words and sentences before the app introduces more complex material.', 'Korte alledaagse woorden en zinnen voordat de app moeilijkere stof toevoegt.'))}</p>
+            <span class="focus-footer"><span>${escapeHtml(explanationText('12 A0 exercises', '12 oefeningen op A0-niveau'))}</span><b>${escapeHtml(explanationText('Start easy', 'Rustig beginnen'))} ${icon('arrow')}</b></span>
+          </button>
           <button class="card focus-card" type="button" data-action="start-topic" data-topic="${recommended.id}" style="--focus:var(--green);--focus-soft:var(--green-soft)">
             <span class="focus-icon">${icon('sparkles')}</span>
             <h3>${escapeHtml(recommended.title)}</h3>
@@ -2141,341 +2186,127 @@ function renderProgress() {
   const activity = getActivityDays(state, 14);
   const maxMinutes = Math.max(15, ...activity.map((day) => day.minutes));
   const totalWords = WORDS.length;
-  const wordProgress = WORDS
-    .map((word) => ({ word, progress: state.progress.items[word.id] }))
-    .filter(({ progress }) => progress && progress.reps > 0);
-  const startedWords = wordProgress.length;
-  const strongWords = wordProgress.filter(({ progress }) => progress.reps >= 3 && progress.confidence >= 0.72).length;
-  const fragileWords = wordProgress.filter(({ progress }) => progress.lapses > 0 || progress.confidence < 0.35).length;
+  const startedWords = WORDS.filter((word) => Number(state.progress.items[word.id]?.reps || 0) > 0).length;
   const learningWords = Math.max(0, startedWords - metrics.masteredWords);
   const unseenWords = Math.max(0, totalWords - startedWords);
-  const transcripts = Object.values(state.conversation.transcripts || {});
-  const simulatedConversations = transcripts.filter((transcript) => transcript?.messages?.some((message) => message.sender === 'user')).length;
-  const completedConversations = transcripts.filter((transcript) => transcript?.completed).length;
-  const activeDays = activity.filter((day) => day.minutes > 0 || day.reviews > 0 || day.speaking > 0 || day.conversations > 0 || day.games > 0).length;
-  const recentMinutes = activity.reduce((sum, day) => sum + Number(day.minutes || 0), 0);
-  const dailyGoal = Math.max(5, Number(state.profile.dailyGoal) || 15);
-  const observedDailyPace = recentMinutes / activity.length;
-  const paceForEstimate = activeDays >= 3 && observedDailyPace >= 2 ? observedDailyPace : dailyGoal;
-  const paceSource = activeDays >= 3 && observedDailyPace >= 2
-    ? `${observedDailyPace.toFixed(1)} focused min/day over the last 14 days`
-    : `${dailyGoal} focused min/day from your goal`;
-  const targetReadiness = 0.76;
-  const comfortProgress = clamp(metrics.conversationReadiness / targetReadiness);
-  const remainingFocusedMinutes = Math.max(0, (targetReadiness - metrics.conversationReadiness) * 2800);
-  const estimatedDays = remainingFocusedMinutes === 0 ? 0 : Math.max(7, Math.ceil(remainingFocusedMinutes / Math.max(1, paceForEstimate)));
-  const estimateLow = estimatedDays ? Math.max(7, Math.round(estimatedDays * 0.8)) : 0;
-  const estimateHigh = estimatedDays ? Math.max(estimateLow + 1, Math.round(estimatedDays * 1.25)) : 0;
   const levelLabel = metrics.cefr === 'Pre-A1' ? 'A0' : metrics.cefr;
-  const placement = state.onboarding?.placement || {};
-  const placementLevelLabel = placement.estimatedLevel === 'Pre-A1' ? 'A0' : placement.estimatedLevel;
-  const placementMode = placement.completedAt ? 'recalibration' : 'placement';
-  const placementDateCopy = placement.completedAt ? formatDateRelative(placement.completedAt) : 'not checked yet';
-  const estimateEvidence = metrics.evidenceConfidence;
-  const estimateConfidence = estimateEvidence < 0.25 ? 'early estimate' : estimateEvidence < 0.62 ? 'growing evidence' : 'well supported';
-  const forecastCopy = estimatedDays
-    ? `Realistic range: ${estimateLow}–${estimateHigh} days. The estimate becomes more personal after every speaking attempt and conversation.`
-    : 'Your current evidence has reached the comfortable family-small-talk target.';
-  const forecastCopyNl = estimatedDays
-    ? `Realistische bandbreedte: ${estimateLow}–${estimateHigh} dagen. De schatting wordt persoonlijker na elke spreekoefening en elk gesprek.`
-    : 'Je huidige resultaten hebben het doel voor ontspannen familiegesprekken bereikt.';
+  const activeDays = activity.filter((day) => day.minutes > 0 || day.reviews > 0 || day.speaking > 0 || day.conversations > 0 || day.games > 0).length;
   const snapshotSkills = [
-    { id: 'reading', title: 'Reading recognition', secondary: 'Leesherkenning', value: metrics.reading, attempts: metrics.skills.reading.attempts },
-    { id: 'listening', title: 'Listening', secondary: 'Luisteren', value: metrics.listening, attempts: metrics.skills.listening.attempts },
-    { id: 'guidedProduction', title: 'Guided production', secondary: 'Begeleid produceren', value: metrics.guidedProduction, attempts: metrics.skills.guidedProduction.attempts },
-    { id: 'freeProduction', title: 'Free production', secondary: 'Zelf produceren', value: metrics.freeProduction, attempts: metrics.skills.freeProduction.attempts },
-    { id: 'pronunciation', title: 'Pronunciation', secondary: 'Uitspraak', value: metrics.pronunciation, attempts: metrics.skills.pronunciation.attempts },
+    { id: 'reading', title: explanationText('Reading', 'Lezen'), value: metrics.reading, attempts: metrics.skills.reading.attempts },
+    { id: 'listening', title: explanationText('Listening', 'Luisteren'), value: metrics.listening, attempts: metrics.skills.listening.attempts },
+    { id: 'guidedProduction', title: explanationText('Building sentences', 'Zinnen bouwen'), value: metrics.guidedProduction, attempts: metrics.skills.guidedProduction.attempts },
+    { id: 'freeProduction', title: explanationText('Speaking from memory', 'Spreken uit het hoofd'), value: metrics.freeProduction, attempts: metrics.skills.freeProduction.attempts },
+    { id: 'pronunciation', title: explanationText('Pronunciation', 'Uitspraak'), value: metrics.pronunciation, attempts: metrics.skills.pronunciation.attempts },
   ];
-  const detailedSkills = [
-    { id: 'reading', title: 'Reading recognition', value: metrics.reading, icon: 'book', detail: `${metrics.skills.reading.attempts} measured attempts` },
-    { id: 'listening', title: 'Listening', value: metrics.listening, icon: 'headphones', detail: `${metrics.skills.listening.attempts} measured attempts` },
-    { id: 'guidedProduction', title: 'Guided production', value: metrics.guidedProduction, icon: 'grid', detail: `${metrics.skills.guidedProduction.attempts} supported retrievals` },
-    { id: 'freeProduction', title: 'Free production', value: metrics.freeProduction, icon: 'message', detail: `${metrics.skills.freeProduction.attempts} independent answers` },
-    { id: 'pronunciation', title: 'Pronunciation confidence', value: metrics.pronunciation, icon: 'mic', detail: `${metrics.skills.pronunciation.attempts} speaking signals` },
-    { id: 'grammar', title: 'Grammar in use', value: metrics.grammar, icon: 'brain', detail: `${Object.keys(state.progress.concepts).length} patterns touched` },
-    { id: 'conversation', title: 'Conversation', value: metrics.conversationReadiness, icon: 'users', detail: `${state.stats.conversationTurns} turns` },
-  ];
-  const hasSkillEvidence = snapshotSkills.some((skill) => skill.value > 0.01);
-  const strongestSkill = hasSkillEvidence
-    ? [...snapshotSkills].sort((a, b) => b.value - a.value)[0]
-    : { title: 'Baseline pending', secondary: 'Nog te meten', value: 0 };
-  const weakestSkill = hasSkillEvidence
-    ? [...snapshotSkills].sort((a, b) => a.value - b.value)[0]
-    : { title: 'Free production', secondary: 'Zelf produceren', value: 0 };
-  const leastMeasuredSkill = [...snapshotSkills].sort((a, b) => a.attempts - b.attempts)[0];
-  const readyCanDoCount = metrics.canDo.filter((task) => task.ready).length;
-  const conceptRows = GRAMMAR_CONCEPTS
-    .map((concept) => ({ concept, progress: state.progress.concepts[concept.id] || { confidence: 0, reviews: 0, mistakes: 0 } }))
-    .sort((a, b) => b.progress.reviews - a.progress.reviews || b.concept.priority - a.concept.priority)
-    .slice(0, 7);
+  const weakestSkill = [...snapshotSkills].sort((a, b) => a.value - b.value)[0];
   const scenarios = REAL_LIFE_SCENARIOS
     .map((scenario) => ({ scenario, score: getScenarioReadiness(state, scenario) }))
     .sort((a, b) => b.score - a.score);
-  const unlocked = scenarios.filter(({ score }) => score >= 0.56);
   const nextScenario = scenarios.find(({ score }) => score < 0.56) || scenarios[0];
-  const sevenDaysAgo = Date.now() - 7 * 86_400_000;
-  const newlyStable = wordProgress.filter(({ progress }) => (
-    progress.reps >= 2
-    && progress.confidence >= 0.48
-    && progress.lastReviewedAt
-    && new Date(progress.lastReviewedAt).getTime() >= sevenDaysAgo
-  )).length;
-  const masteryTotal = Math.max(1, totalWords);
-  const stableButNotStrong = Math.max(0, metrics.masteredWords - strongWords);
-  const masterySegments = {
-    strong: strongWords / masteryTotal * 100,
-    stable: stableButNotStrong / masteryTotal * 100,
-    learning: learningWords / masteryTotal * 100,
-    unseen: unseenWords / masteryTotal * 100,
-  };
-  const reviewHistory = Object.values(state.progress.items || {}).flatMap((progress) => Array.isArray(progress.history) ? progress.history : []);
-  const evidenceReviews = reviewHistory.filter((entry) => entry.correct !== null && entry.correct !== undefined);
-  const independentCorrect = evidenceReviews.filter((entry) => entry.correct && Number(entry.hintLevel || 0) === 0).length;
-  const hintedReviews = evidenceReviews.filter((entry) => Number(entry.hintLevel || 0) > 0).length;
-  const averageHintLevel = hintedReviews
-    ? evidenceReviews.filter((entry) => Number(entry.hintLevel || 0) > 0).reduce((sum, entry) => sum + Number(entry.hintLevel || 0), 0) / hintedReviews
-    : 0;
-  const independenceRate = evidenceReviews.length ? independentCorrect / evidenceReviews.length : 0;
-  const hintLevelCounts = state.stats.hintLevelCounts || {};
-  const totalHintRequests = Math.max(1, Object.values(hintLevelCounts).reduce((sum, value) => sum + Number(value || 0), 0));
-  const listeningStats = ensureListeningStats();
-  const soundStats = ensureSoundStats();
-  const naturalListeningAccuracy = ratio(listeningStats.naturalSpeedCorrect, listeningStats.naturalSpeedAttempts);
-  const fastListeningAccuracy = ratio(listeningStats.fastSpeedCorrect, listeningStats.fastSpeedAttempts);
-  const dictationAccuracy = ratio(listeningStats.dictationCorrect, listeningStats.dictations);
-  const soundAccuracy = ratio(soundStats.correct, soundStats.attempts);
-  const soundCompletion = Math.round((soundStats.completedLessons.length / Math.max(1, SOUND_LESSONS.length)) * 100);
+  const dueCount = getDueItems(state).length;
+  const evidence = Math.round(metrics.evidenceConfidence * 100);
+  const readyCount = metrics.canDo.filter((task) => task.ready).length;
 
   return `
-    <div class="view section-stack progress-page">
+    <div class="view section-stack progress-page progress-page-compact">
       <section class="progress-snapshot">
-        <div class="progress-snapshot-heading">
+        <div class="progress-snapshot-heading compact-progress-heading">
           <div>
             <p class="eyebrow progress-page-eyebrow">${escapeHtml(explanationText('PROGRESS', 'VOORTGANG'))}</p>
-            <h2>${escapeHtml(explanationText('Your Polish, in numbers', 'Jouw Pools, in cijfers'))}</h2>
-            <p class="progress-intro">${escapeHtml(explanationText('Based on what you can genuinely recall, understand, and say—not on lessons merely opened.', 'Gebaseerd op wat je echt kunt terughalen, verstaan en zeggen.'))}</p>
+            <h2>${escapeHtml(explanationText('Your progress at a glance', 'Jouw voortgang in één oogopslag'))}</h2>
+            <p class="progress-intro">${escapeHtml(explanationText('Only the information that helps you decide what to practise next.', 'Alleen de informatie die helpt bepalen wat je hierna moet oefenen.'))}</p>
           </div>
-          <span class="evidence-chip">${Math.round(estimateEvidence * 100)}% evidence · ${escapeHtml(estimateConfidence)}</span>
+          <span class="evidence-chip">${evidence}% ${escapeHtml(explanationText('measurement confidence', 'betrouwbaarheid van meting'))}</span>
         </div>
 
-        <article class="card comfort-forecast-card" style="--comfort-angle:${Math.round(comfortProgress * 360)}deg">
-          <div class="comfort-forecast-copy">
-            <span class="progress-overline">${escapeHtml(explanationText('TIME TO COMFORTABLE FAMILY CONVERSATIONS', 'TOT COMFORTABELE FAMILIEGESPREKKEN'))}</span>
-            <div class="comfort-forecast-number">
-              <strong>${estimatedDays ? `≈ ${estimatedDays}` : 'Now'}</strong>
-              <span>${estimatedDays ? 'days' : 'ready'}</span>
-            </div>
-            <p>${escapeHtml(explanationText(forecastCopy, forecastCopyNl))}</p>
-          </div>
-          <div class="comfort-readiness-ring" aria-label="${Math.round(comfortProgress * 100)} percent ready for comfortable family conversations">
-            <div><strong>${Math.round(comfortProgress * 100)}%</strong><span>ready</span></div>
-          </div>
-          <div class="comfort-forecast-footer">
-            <div class="comfort-linear-track"><span style="width:${Math.round(comfortProgress * 100)}%"></span></div>
-            <span>${escapeHtml(paceSource)}</span>
-          </div>
-        </article>
-
-        <div class="progress-stat-grid">
+        <div class="progress-stat-grid progress-stat-grid-compact">
+          <article class="card progress-stat-card">
+            <span class="progress-stat-label">${escapeHtml(explanationText('ESTIMATED LEVEL', 'GESCHAT NIVEAU'))}</span>
+            <span class="progress-stat-value"><strong>${escapeHtml(levelLabel)}</strong></span>
+            <span class="progress-stat-detail">${escapeHtml(explanationText('Based on active recall', 'Gebaseerd op actief terughalen'))}</span>
+            <span class="progress-stat-icon">${icon('flag')}</span>
+          </article>
           <button class="card progress-stat-card" type="button" data-action="go-view" data-view="library">
-            <span class="progress-stat-label">${escapeHtml(explanationText('VOCABULARY', 'WOORDENSCHAT'))}</span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('WORDS LEARNED', 'WOORDEN GELEERD'))}</span>
             <span class="progress-stat-value"><strong>${metrics.masteredWords}</strong><b>/ ${totalWords}</b></span>
-            <span class="progress-stat-detail">${learningWords} learning · ${fragileWords} need support</span>
+            <span class="progress-stat-detail">${learningWords} ${escapeHtml(explanationText('still learning', 'nog aan het leren'))}</span>
             <span class="progress-stat-icon">${icon('book')}</span>
           </button>
           <article class="card progress-stat-card">
-            <span class="progress-stat-label">${escapeHtml(explanationText('ESTIMATED LEVEL', 'GESCHAT NIVEAU'))}</span>
-            <span class="progress-stat-value"><strong>${levelLabel}</strong></span>
-            <span class="progress-stat-detail">${Math.round(metrics.cefrProgress * 100)}% toward ${metrics.nextCefr} · ${escapeHtml(estimateConfidence)}</span>
-            <span class="progress-stat-icon">${icon('flag')}</span>
-          </article>
-          <article class="card progress-stat-card">
-            <span class="progress-stat-label">${escapeHtml(explanationText('STREAK', 'ACTIEVE REEKS'))}</span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('STREAK', 'REEKS'))}</span>
             <span class="progress-stat-value"><strong>🔥 ${state.stats.streak || 0}</strong></span>
-            <span class="progress-stat-detail">best ${state.stats.bestStreak || 0} days · ${activeDays}/14 active recently</span>
+            <span class="progress-stat-detail">${activeDays}/14 ${escapeHtml(explanationText('active days recently', 'recente actieve dagen'))}</span>
             <span class="progress-stat-icon">${icon('calendar')}</span>
           </article>
           <button class="card progress-stat-card" type="button" data-action="go-view" data-view="talk">
-            <span class="progress-stat-label">${escapeHtml(explanationText('CONVERSATIONS', 'GESPREKKEN'))}</span>
-            <span class="progress-stat-value"><strong>💬 ${simulatedConversations}</strong></span>
-            <span class="progress-stat-detail">${completedConversations} completed · ${metrics.unlockedConversations} scenarios ready</span>
+            <span class="progress-stat-label">${escapeHtml(explanationText('CONVERSATION READY', 'KLAAR VOOR GESPREKKEN'))}</span>
+            <span class="progress-stat-value"><strong>${Math.round(metrics.conversationReadiness * 100)}%</strong></span>
+            <span class="progress-stat-detail">${readyCount}/${metrics.canDo.length} ${escapeHtml(explanationText('practical abilities ready', 'praktische vaardigheden gereed'))}</span>
             <span class="progress-stat-icon">${icon('message')}</span>
           </button>
         </div>
 
-        <article class="card snapshot-skills-card">
+        <article class="card snapshot-skills-card compact-skills-card">
           <div class="snapshot-skills-head">
-            <div><span class="progress-overline">${escapeHtml(explanationText('SKILLS', 'VAARDIGHEDEN'))}</span><p>${escapeHtml(explanationText('Your estimate separates understanding from producing Polish.', 'De schatting maakt onderscheid tussen Pools begrijpen en zelf produceren.'))}</p></div>
-            <span class="soft-pill">${hasSkillEvidence ? `strongest: ${escapeHtml(strongestSkill.title)}` : escapeHtml(strongestSkill.title)}</span>
+            <div><span class="progress-overline">${escapeHtml(explanationText('CORE SKILLS', 'KERNVAARDIGHEDEN'))}</span><p>${escapeHtml(explanationText('A simple balance of understanding and speaking.', 'Een eenvoudig overzicht van begrijpen en spreken.'))}</p></div>
           </div>
           <div class="snapshot-skill-list">
             ${snapshotSkills.map((skill) => `
               <div class="snapshot-skill-row">
-                <span><strong>${escapeHtml(explanationText(skill.title, skill.secondary))}</strong><small>${skill.attempts} ${escapeHtml(explanationText('checks', 'metingen'))}</small></span>
+                <span><strong>${escapeHtml(skill.title)}</strong><small>${skill.attempts} ${escapeHtml(explanationText('checks', 'metingen'))}</small></span>
                 <div class="snapshot-skill-track"><i style="width:${Math.round(skill.value * 100)}%"></i></div>
                 <b>${Math.round(skill.value * 100)}%</b>
               </div>
             `).join('')}
           </div>
-          <div class="snapshot-skill-note">${hasSkillEvidence ? `Next leverage point: <strong>${escapeHtml(weakestSkill.title)}</strong>. Blisko will quietly weight this skill more often in review and conversation practice.` : `Complete one short review and one speaking attempt to establish a personal skill baseline.`}</div>
         </article>
 
-        <article class="card support-independence-card">
-          <div class="support-independence-head">
-            <div><span class="progress-overline">${escapeHtml(explanationText('SUPPORT INDEPENDENCE', 'ZELFSTANDIG ZONDER HULP'))}</span><h3>${evidenceReviews.length ? `${Math.round(independenceRate * 100)}% ${escapeHtml(explanationText('independent retrieval', 'zelfstandig opgehaald'))}` : escapeHtml(explanationText('No hint baseline yet', 'Nog geen basislijn voor hints'))}</h3><p>${escapeHtml(explanationText('Hints are not failures. This measures how often useful Polish returns before support is needed.', 'Hints zijn geen fouten. Dit meet hoe vaak bruikbaar Pools terugkomt vóórdat hulp nodig is.'))}</p></div>
-            <div class="support-independence-score" style="--independence:${Math.round(independenceRate * 100)}%"><strong>${independentCorrect}</strong><span>independent wins</span></div>
-          </div>
-          <div class="support-independence-track"><span style="width:${Math.round(independenceRate * 100)}%"></span></div>
-          <div class="support-evidence-grid">
-            <div><strong>${hintedReviews}</strong><span>hinted reviews</span></div>
-            <div><strong>${averageHintLevel ? averageHintLevel.toFixed(1) : '—'}</strong><span>average level needed</span></div>
-            <div><strong>${state.stats.hintRecoveries || 0}</strong><span>active-recall recoveries</span></div>
-            <div><strong>${state.stats.almostKnown || 0}</strong><span>almost-known signals</span></div>
-          </div>
-          <div class="hint-level-distribution" aria-label="Hint request distribution">
-            ${[1,2,3,4,5].map((level) => `<span title="Hint ${level}: ${Number(hintLevelCounts[level] || 0)} requests"><i style="height:${Math.max(8, Number(hintLevelCounts[level] || 0) / totalHintRequests * 100)}%"></i><b>${level}</b></span>`).join('')}
-          </div>
-        </article>
-
-        <article class="card listening-intelligence-card">
-          <div class="listening-intelligence-head">
-            <div><span class="progress-overline">${escapeHtml(explanationText('LISTENING INTELLIGENCE', 'LUISTERINTELLIGENTIE'))}</span><h3>${listeningStats.attempts ? `${naturalListeningAccuracy}% ${escapeHtml(explanationText('at natural speed', 'op natuurlijk tempo'))}` : escapeHtml(explanationText('Build a real listening baseline', 'Bouw een echte luisterbasislijn op'))}</h3><p>${escapeHtml(explanationText('Blisko now separates slow recognition, natural-speed understanding, dictation detail, and sound contrasts.', 'Blisko meet langzaam herkennen, natuurlijk tempo, dicteerdetail en klankcontrasten afzonderlijk.'))}</p></div>
-            <button class="secondary-button compact" type="button" data-action="open-listening-lab">${icon('headphones')} Start listening lab</button>
-          </div>
-          <div class="listening-evidence-grid">
-            <div><span>Natural speed</span><strong>${listeningStats.naturalSpeedAttempts ? `${naturalListeningAccuracy}%` : '—'}</strong><small>${listeningStats.naturalSpeedAttempts} checks</small></div>
-            <div><span>Stretch speed</span><strong>${listeningStats.fastSpeedAttempts ? `${fastListeningAccuracy}%` : '—'}</strong><small>${listeningStats.fastSpeedAttempts} checks</small></div>
-            <div><span>Dictation detail</span><strong>${listeningStats.dictations ? `${dictationAccuracy}%` : '—'}</strong><small>${listeningStats.dictations} attempts</small></div>
-            <div><span>Sound contrasts</span><strong>${soundStats.attempts ? `${soundAccuracy}%` : '—'}</strong><small>${soundStats.completedLessons.length}/${SOUND_LESSONS.length} lessons</small></div>
-          </div>
-          <div class="listening-evidence-bars">
-            <div><span>Natural family pace</span><div class="progress-track"><span style="width:${naturalListeningAccuracy}%"></span></div><b>${naturalListeningAccuracy}%</b></div>
-            <div><span>Sound-family coverage</span><div class="progress-track"><span style="width:${soundCompletion}%"></span></div><b>${soundCompletion}%</b></div>
-          </div>
-          <div class="button-row"><button class="text-button" type="button" data-action="open-sound-lab">Open Polish Sound Lab ${icon('arrow')}</button><span class="listening-replay-note">${listeningStats.replays} replays used · replaying is evidence, not failure</span></div>
-        </article>
-      </section>
-
-      <section class="progress-overview">
-        <article class="card cefr-card" style="--cefr-progress:${Math.round(metrics.cefrProgress * 100)}%">
+        <article class="card compact-next-step-card">
           <div>
-            <p class="eyebrow progress-page-eyebrow">${escapeHtml(explanationText('ESTIMATED COMMUNICATIVE LEVEL', 'GESCHAT COMMUNICATIEF NIVEAU'))}</p>
-            <h2>${levelLabel} → ${metrics.nextCefr}</h2>
-            <p>This is a conservative estimate from active recall, listening, guided and free production, pronunciation, grammar patterns, and completed scenarios—not a claim based on lesson count.</p>
-            <div class="cefr-scale">
-              ${['A0','A1','A2','B1','B2','C1'].map((label) => `<span class="${levelLabel === label ? 'active' : ''}">${label}</span>`).join('')}
-            </div>
-            <div class="cefr-calibration-row">
-              <span><strong>${placement.completedAt ? `Last diagnostic: ${escapeHtml(placementLevelLabel || levelLabel)}` : 'No diagnostic baseline yet'}</strong><small>${placement.completedAt ? `${placementDateCopy} · normal practice now updates the estimate continuously` : 'An 11-question check gives the model a safer starting point.'}</small></span>
-              <button class="secondary-button compact" type="button" data-action="open-placement" data-mode="${placementMode}">${placement.completedAt ? (metrics.recalibrationDue ? 'Recalibrate' : 'Check again') : 'Take level check'}</button>
-            </div>
+            <span class="progress-overline">${escapeHtml(explanationText('BEST NEXT STEP', 'BESTE VOLGENDE STAP'))}</span>
+            <h3>${escapeHtml(explanationText(`Focus on ${weakestSkill.title.toLowerCase()}`, `Focus op ${weakestSkill.title.toLowerCase()}`))}</h3>
+            <p>${escapeHtml(explanationText(
+              dueCount ? `${dueCount} memories are ready for review. A short session will combine those with your weakest skill.` : 'Your next useful family scenario is ready.',
+              dueCount ? `${dueCount} herinneringen zijn klaar voor herhaling. Een korte sessie combineert deze met je zwakste vaardigheid.` : 'Je volgende nuttige familiesituatie staat klaar.',
+            ))}</p>
           </div>
-          <div class="cefr-badge"><strong>${levelLabel}</strong><span>${Math.round(metrics.cefrProgress * 100)}% to ${metrics.nextCefr}</span><small>${Math.round(metrics.evidenceConfidence * 100)}% evidence confidence</small></div>
+          <div class="compact-progress-actions">
+            <button class="primary-button" type="button" data-action="start-session" data-mode="smart">${icon('play')} ${escapeHtml(explanationText('Start smart session', 'Start slimme sessie'))}</button>
+            <button class="secondary-button" type="button" data-action="start-beginner-basics">${escapeHtml(explanationText('Practise basics', 'Oefen de basis'))}</button>
+          </div>
         </article>
 
-        <article class="card conversation-card">
-          <span class="pattern-label progress-bilingual-label">${escapeHtml(explanationText('NEXT REAL-WORLD WIN', 'VOLGENDE WINST IN HET ECHTE LEVEN'))}</span>
-          <div class="conversation-count"><strong>${Math.round(nextScenario.score * 100)}%</strong><span>${escapeHtml(nextScenario.scenario.title)} readiness</span></div>
-          <p>${metrics.estimatedWeeks ? `At your measured or chosen pace, the model estimates about ${estimatedDays} days to comfortable family small talk.` : 'Your current scenario model has reached the comfortable small-talk target.'}</p>
-          <div class="conversation-tags">
-            ${unlocked.length ? unlocked.slice(0, 6).map(({ scenario }) => `<span class="conversation-tag">${scenario.emoji} ${escapeHtml(scenario.title)}</span>`).join('') : '<span class="conversation-tag">First scenario unlocks at 56% readiness</span>'}
-          </div>
-          <button class="secondary-button progress-next-button" type="button" data-action="go-view" data-view="talk">Practise this scenario ${icon('arrow')}</button>
-        </article>
-      </section>
-
-      <section class="can-do-calibration-grid">
-        <article class="card can-do-card">
-          <div class="section-heading">
-            <div><p class="eyebrow progress-page-eyebrow">${escapeHtml(explanationText('REAL-LIFE CAN-DO EVIDENCE', 'BEWIJS UIT ECHTE SITUATIES'))}</p><h2>${readyCanDoCount} ${escapeHtml(explanationText(`of ${metrics.canDo.length} practical abilities ready`, `van ${metrics.canDo.length} praktische vaardigheden gereed`))}</h2><p>${escapeHtml(explanationText('CEFR estimates become useful only when they describe what you can actually do.', 'CEFR-schattingen zijn pas nuttig wanneer ze beschrijven wat je echt kunt.'))}</p></div>
-            <span class="can-do-score">${readyCanDoCount}/${metrics.canDo.length}</span>
-          </div>
-          <div class="can-do-list">
-            ${metrics.canDo.map((task) => `<div class="can-do-row ${task.ready ? 'ready' : ''}"><span>${task.ready ? icon('check') : icon('lock')}</span><p>${escapeHtml(task.label)}</p><b>${task.ready ? 'Ready' : 'Building'}</b></div>`).join('')}
-          </div>
-        </article>
-        <article class="card evidence-quality-card">
-          <span class="progress-overline">${escapeHtml(explanationText('EVIDENCE QUALITY', 'KWALITEIT VAN DE METING'))}</span>
-          <h3>${Math.round(metrics.evidenceConfidence * 100)}% confidence in this estimate</h3>
-          <p>The model lowers certainty when a skill has too few attempts. It never fills an evidence gap with vocabulary count alone.</p>
-          <div class="evidence-quality-meter"><span style="width:${Math.round(metrics.evidenceConfidence * 100)}%"></span></div>
-          <div class="evidence-quality-facts">
-            <span><strong>Least measured</strong><b>${escapeHtml(leastMeasuredSkill.title)} · ${leastMeasuredSkill.attempts} checks</b></span>
-            <span><strong>Diagnostic</strong><b>${placement.completedAt ? `${escapeHtml(placementLevelLabel || levelLabel)} · ${placementDateCopy}` : 'Not completed'}</b></span>
-            <span><strong>Recalibration</strong><b>${metrics.recalibrationDue ? 'Recommended now' : 'Not needed yet'}</b></span>
-          </div>
-          <button class="${metrics.recalibrationDue ? 'primary-button' : 'secondary-button'}" type="button" data-action="open-placement" data-mode="${placementMode}">${placement.completedAt ? 'Recalibrate across all skills' : 'Create a diagnostic baseline'} ${icon('arrow')}</button>
-        </article>
-      </section>
-
-      <section class="mastery-snapshot-grid">
-        <article class="card mastery-distribution-card">
-          <div class="section-heading"><div><h2>${escapeHtml(explanationText('Memory distribution', 'Geheugenverdeling'))}</h2><p>${escapeHtml(explanationText('Where every curriculum word currently sits.', 'Waar elk woord uit het leerprogramma nu staat.'))}</p></div><span class="soft-pill">+${newlyStable} ${escapeHtml(explanationText('stable this week', 'deze week stabiel'))}</span></div>
-          <div class="mastery-segmented-track" aria-label="Vocabulary mastery distribution">
-            <span class="segment-strong" style="width:${masterySegments.strong}%"></span>
-            <span class="segment-stable" style="width:${masterySegments.stable}%"></span>
-            <span class="segment-learning" style="width:${masterySegments.learning}%"></span>
-            <span class="segment-unseen" style="width:${masterySegments.unseen}%"></span>
-          </div>
-          <div class="mastery-legend">
-            <span><i class="strong"></i><b>${strongWords}</b> strong</span>
-            <span><i class="stable"></i><b>${stableButNotStrong}</b> stable</span>
-            <span><i class="learning"></i><b>${learningWords}</b> learning</span>
-            <span><i class="unseen"></i><b>${unseenWords}</b> unseen</span>
-          </div>
-        </article>
-        <article class="card estimate-method-card">
-          <span class="progress-overline">${escapeHtml(explanationText('WHY THE NUMBER MOVES', 'WAAROM DE SCHATTING VERANDERT'))}</span>
-          <h3>Real evidence changes the forecast.</h3>
-          <div class="estimate-factor"><span>Conversation readiness</span><b>${Math.round(metrics.conversationReadiness * 100)}%</b><div class="progress-track"><span style="width:${Math.round(metrics.conversationReadiness * 100)}%"></span></div></div>
-          <div class="estimate-factor"><span>Speaking evidence</span><b>${Math.round(metrics.speaking * 100)}%</b><div class="progress-track"><span style="width:${Math.round(metrics.speaking * 100)}%"></span></div></div>
-          <div class="estimate-factor"><span>Stable sentence material</span><b>${Math.round(clamp((metrics.masteredWords / 100) * 0.45 + (metrics.knownPhrases / 48) * 0.55) * 100)}%</b><div class="progress-track"><span style="width:${Math.round(clamp((metrics.masteredWords / 100) * 0.45 + (metrics.knownPhrases / 48) * 0.55) * 100)}%"></span></div></div>
-        </article>
-      </section>
-
-      <section class="skill-grid">
-        ${detailedSkills.map((skill) => `
-          <article class="card skill-card">
-            <div class="skill-card-head"><span>${icon(skill.icon)}</span><b>${Math.round(skill.value * 100)}%</b></div>
-            <strong>${escapeHtml(skill.title)}</strong>
-            <p>${escapeHtml(skill.detail)}</p>
-            <div class="progress-track"><span style="width:${Math.round(skill.value * 100)}%"></span></div>
-          </article>
-        `).join('')}
-      </section>
-
-      <section class="chart-grid">
-        <article class="card chart-card">
-          <div class="section-heading"><div><h2>${escapeHtml(explanationText('Focused minutes', 'Gerichte minuten'))}</h2><p>${escapeHtml(explanationText('The last fourteen days on this device.', 'De laatste 14 dagen op dit apparaat.'))}</p></div><span class="soft-pill" style="padding:6px 9px;background:var(--green-soft);color:var(--green);font-size:9px">${Math.round(state.stats.totalMinutes)} min</span></div>
-          <div class="activity-chart">
-            ${activity.map((day) => `
-              <div class="chart-column" title="${day.date}: ${day.minutes} minutes">
-                <div class="chart-bar-wrap"><div class="chart-bar" style="--height:${Math.max(3, day.minutes / maxMinutes * 100)}%"></div></div>
-                <span>${day.dayLabel}</span>
+        <details class="card compact-progress-details">
+          <summary><span>${escapeHtml(explanationText('More details', 'Meer details'))}</span><small>${escapeHtml(explanationText('Activity, memory distribution, and estimate quality', 'Activiteit, geheugenverdeling en kwaliteit van de schatting'))}</small></summary>
+          <div class="compact-progress-details-body">
+            <section class="compact-detail-section">
+              <div class="section-heading"><div><h2>${escapeHtml(explanationText('Last 14 days', 'Laatste 14 dagen'))}</h2><p>${escapeHtml(explanationText('Focused minutes on this device.', 'Gerichte minuten op dit apparaat.'))}</p></div></div>
+              <div class="activity-chart compact-activity-chart">
+                ${activity.map((day) => `
+                  <div class="chart-column" title="${day.date}: ${day.minutes} min">
+                    <div class="chart-bar-wrap"><div class="chart-bar" style="--height:${Math.max(3, day.minutes / maxMinutes * 100)}%"></div></div>
+                    <span>${day.dayLabel}</span>
+                  </div>
+                `).join('')}
               </div>
-            `).join('')}
-          </div>
-        </article>
-
-        <article class="card chart-card">
-          <div class="section-heading"><div><h2>${escapeHtml(explanationText('Grammar patterns', 'Grammaticapatronen'))}</h2><p>${escapeHtml(explanationText('Confidence grows through sentences, not rule memorization.', 'Vertrouwen groeit door zinnen, niet door regels uit het hoofd te leren.'))}</p></div></div>
-          <div class="mastery-list">
-            ${conceptRows.map(({ concept, progress }) => `
-              <div class="mastery-row">
-                <span class="mastery-copy"><strong>${escapeHtml(concept.title)}</strong><span>${progress.reviews} encounters · ${progress.mistakes} friction points</span></span>
-                <span class="mastery-score">${Math.round(progress.confidence * 100)}%</span>
-                <span class="progress-track"><span style="width:${Math.round(progress.confidence * 100)}%"></span></span>
+            </section>
+            <section class="compact-detail-section compact-memory-summary">
+              <h3>${escapeHtml(explanationText('Vocabulary status', 'Status woordenschat'))}</h3>
+              <div class="compact-memory-grid">
+                <span><strong>${metrics.masteredWords}</strong><small>${escapeHtml(explanationText('learned', 'geleerd'))}</small></span>
+                <span><strong>${learningWords}</strong><small>${escapeHtml(explanationText('learning', 'aan het leren'))}</small></span>
+                <span><strong>${unseenWords}</strong><small>${escapeHtml(explanationText('not started', 'nog niet gestart'))}</small></span>
+                <span><strong>${metrics.knownPhrases}</strong><small>${escapeHtml(explanationText('usable phrases', 'bruikbare zinnen'))}</small></span>
               </div>
-            `).join('')}
+            </section>
+            <section class="compact-detail-section compact-evidence-summary">
+              <h3>${escapeHtml(explanationText('Estimate quality', 'Kwaliteit van de schatting'))}</h3>
+              <p>${escapeHtml(explanationText('The estimate becomes more reliable after listening, speaking, and free-answer exercises—not simply by opening lessons.', 'De schatting wordt betrouwbaarder door luister-, spreek- en vrije-antwoordoefeningen, niet alleen door lessen te openen.'))}</p>
+              <div class="evidence-quality-meter"><span style="width:${evidence}%"></span></div>
+              <strong>${evidence}%</strong>
+            </section>
           </div>
-        </article>
-      </section>
-
-      <section class="metric-grid progress-bottom-metrics">
-        <article class="card metric-card"><div class="metric-head"><span class="metric-icon">${icon('book')}</span><span class="metric-trend">usable vocabulary</span></div><strong class="metric-value">${metrics.masteredWords}</strong><p>words stable enough to retrieve</p></article>
-        <article class="card metric-card"><div class="metric-head"><span class="metric-icon">${icon('message')}</span><span class="metric-trend">sentence chunks</span></div><strong class="metric-value">${metrics.knownPhrases}</strong><p>phrases ready to speak</p></article>
-        <article class="card metric-card"><div class="metric-head"><span class="metric-icon">${icon('target')}</span><span class="metric-trend">memory evidence</span></div><strong class="metric-value">${Math.round(metrics.accuracy * 100)}%</strong><p>review accuracy</p></article>
-        <article class="card metric-card"><div class="metric-head"><span class="metric-icon">${icon('calendar')}</span><span class="metric-trend">best ${state.stats.bestStreak || 0}</span></div><strong class="metric-value">${state.stats.streak || 0}</strong><p>day conversation streak</p></article>
+        </details>
       </section>
     </div>
   `;
@@ -2498,6 +2329,7 @@ function renderLibrary() {
           <label class="search-box">${icon('search')}<input id="library-search" type="search" value="${escapeHtml(libraryQuery)}" placeholder="Search Polish, Dutch, or English…" aria-label="Search word library"></label>
           <select id="library-filter" class="filter-select" aria-label="Filter words">
             <option value="all" ${libraryFilter === 'all' ? 'selected' : ''}>All types</option>
+            <option value="beginner" ${libraryFilter === 'beginner' ? 'selected' : ''}>Beginner A0</option>
             <option value="verb" ${libraryFilter === 'verb' ? 'selected' : ''}>Verbs first</option>
             <option value="noun" ${libraryFilter === 'noun' ? 'selected' : ''}>Nouns</option>
             <option value="expression" ${libraryFilter === 'expression' ? 'selected' : ''}>Expressions</option>
@@ -2522,6 +2354,7 @@ function renderWordRows() {
     const progress = state.progress.items[word.id];
     const searchable = normalizeText(`${word.pl} ${word.nl} ${word.en} ${word.type} ${word.topic}`, { loose: true });
     if (query && !searchable.includes(query)) return false;
+    if (libraryFilter === 'beginner') return word.level === 'A0';
     if (libraryFilter === 'known') return progress?.confidence >= 0.48;
     if (libraryFilter === 'weak') return progress && (progress.lapses > 0 || progress.confidence < 0.4);
     if (libraryFilter !== 'all' && libraryFilter !== word.type) return false;
@@ -2537,7 +2370,7 @@ function renderWordRows() {
     return `
       <button class="word-row" type="button" data-action="open-word" data-word="${word.id}">
         <span class="word-polish"><strong lang="pl">${escapeHtml(word.pl)}</strong><span lang="pl">${escapeHtml(word.example)}</span></span>
-        <span class="word-translation"><strong>${escapeHtml(word.nl)}</strong><span>${escapeHtml(word.en)}</span></span>
+        <span class="word-translation"><strong>${escapeHtml(primaryLanguage() === 'nl' ? word.nl : word.en)}</strong></span>
         <span class="word-kind">${escapeHtml(word.type)}</span>
         <span class="word-topic">${escapeHtml(word.topic)}</span>
         <span class="word-mastery"><span class="progress-track"><span style="width:${Math.round((progress?.confidence || 0) * 100)}%"></span></span><span>${progress ? `${Math.round(progress.confidence * 100)}%` : 'new'}</span></span>
@@ -2545,6 +2378,29 @@ function renderWordRows() {
     `;
   }).join('');
 }
+
+const getBeginnerBasicsIds = ({ length = 12 } = {}) => {
+  const now = Date.now();
+  const score = (item) => {
+    const progress = state.progress.items[item.id];
+    const dueAt = progress?.dueAt ? new Date(progress.dueAt).getTime() : Number.POSITIVE_INFINITY;
+    const due = Boolean(progress && Number.isFinite(dueAt) && dueAt <= now);
+    const weak = Boolean(progress && (progress.lapses > 0 || progress.confidence < 0.5));
+    const unseen = !progress;
+    const base = due ? 1000 : weak ? 780 : unseen ? 600 : 180;
+    return base + (progress ? (1 - Number(progress.confidence || 0)) * 120 : 0) + Number(item.priority || 0);
+  };
+  const words = WORDS.filter((item) => item.level === 'A0').map((item) => ({ item, score: score(item) })).sort((a, b) => b.score - a.score);
+  const phrases = PHRASES.filter((item) => item.level === 'A0').map((item) => ({ item, score: score(item) })).sort((a, b) => b.score - a.score);
+  const selected = [];
+  let wi = 0;
+  let pi = 0;
+  while (selected.length < length && (wi < words.length || pi < phrases.length)) {
+    if (pi < phrases.length) selected.push(phrases[pi++].item.id);
+    if (selected.length < length && wi < words.length) selected.push(words[wi++].item.id);
+  }
+  return selected.slice(0, length);
+};
 
 const getVocabularyBoostIds = ({ length = 12, topic = null } = {}) => {
   const now = Date.now();
@@ -4950,6 +4806,13 @@ const handleAction = (event) => {
       break;
     case 'start-topic':
       startSession({ mode: 'smart', topic: target.dataset.topic, title: TOPICS.find((topic) => topic.id === target.dataset.topic)?.title });
+      break;
+    case 'start-beginner-basics':
+      startSession({
+        mode: 'smart',
+        itemIds: getBeginnerBasicsIds({ length: 12 }),
+        title: explanationText('Beginner basics', 'Basis voor beginners'),
+      });
       break;
     case 'start-vocabulary-boost':
       startSession({

@@ -1,12 +1,9 @@
-BLISKO 1.8.1 - COMPLETE INTERFACE LOCALISATION
+BLISKO 1.9 - BEGINNER BASICS + COMPACT PROGRESS
 
-Upload every file in this folder together. Do not mix files from older builds.
+Upload every file in this folder to replace the existing app.
 
-Version 1.8.1 adds:
-- Complete Dutch interface when the Dutch flag is active
-- Complete English interface when the English flag is active
-- Polish words, sentences, audio text, and answer material remain Polish
-- Localised navigation, buttons, settings, games, progress, dialogs, notifications, counters, and accessibility labels
-- All existing learning progress remains compatible through schema 8
+Version 1.9 adds a beginner-first A0 practice path, 85 basic everyday words, and 48 short practical sentences. The Learn screen now includes a dedicated Beginner basics session.
 
-After deployment, open the hosted app once while online. The service worker installs the verified 1.8.1 shell and performs one controlled restart if needed.
+The Progress screen is intentionally calmer: it shows level, learned words, streak, conversation readiness, core skill bars, and the best next step. Activity and estimate details are placed inside one collapsed More details section.
+
+After deployment, open the app once while online so the service worker can install the 1.9 shell. If an older screen remains visible, use Settings > Repair downloaded app files once. Learning progress is not deleted.

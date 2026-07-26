@@ -6431,3 +6431,65 @@ body.session-keyboard-open .session-footer-inner.pre-answer .ghost-button {
     min-height: 44px;
   }
 }
+
+
+/* Blisko 1.9: calmer progress overview */
+.progress-page-compact .progress-snapshot { gap: 18px; }
+.progress-stat-grid-compact { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.compact-skills-card { margin-top: 0; }
+.compact-next-step-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+}
+.compact-next-step-card h3 { margin: 8px 0 8px; font-size: clamp(22px, 3vw, 34px); }
+.compact-next-step-card p { margin: 0; color: var(--muted); max-width: 720px; line-height: 1.55; }
+.compact-progress-actions { display: flex; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
+.compact-progress-details { padding: 0; overflow: hidden; }
+.compact-progress-details summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 22px 24px;
+  position: relative;
+}
+.compact-progress-details summary::-webkit-details-marker { display: none; }
+.compact-progress-details summary::after {
+  content: '+';
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 24px;
+  color: var(--green);
+}
+.compact-progress-details[open] summary::after { content: '−'; }
+.compact-progress-details summary span { font-size: 18px; font-weight: 800; }
+.compact-progress-details summary small { color: var(--muted); padding-right: 44px; }
+.compact-progress-details-body { border-top: 1px solid var(--line); padding: 24px; display: grid; gap: 26px; }
+.compact-detail-section + .compact-detail-section { border-top: 1px solid var(--line); padding-top: 24px; }
+.compact-activity-chart { height: 150px; }
+.compact-memory-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.compact-memory-grid span { border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 5px; background: var(--surface-soft); }
+.compact-memory-grid strong { font-size: 25px; }
+.compact-memory-grid small { color: var(--muted); }
+.compact-evidence-summary { position: relative; }
+.compact-evidence-summary p { color: var(--muted); max-width: 760px; }
+.compact-evidence-summary > strong { display: block; text-align: right; margin-top: 8px; }
+.beginner-basics-card { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 28%, transparent); }
+@media (max-width: 980px) {
+  .progress-stat-grid-compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compact-next-step-card { align-items: flex-start; flex-direction: column; }
+}
+@media (max-width: 620px) {
+  .progress-stat-grid-compact { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .compact-progress-actions { width: 100%; }
+  .compact-progress-actions .primary-button,
+  .compact-progress-actions .secondary-button { flex: 1 1 100%; justify-content: center; }
+  .compact-memory-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compact-progress-details-body { padding: 18px; }
+}

@@ -1,4 +1,11 @@
 const EXACT_NL = {
+  'Everyday basics': 'Alledaagse basis',
+  'basics': 'basis',
+  'number': 'getal',
+  'Simple words for your first conversations': 'Eenvoudige woorden voor je eerste gesprekken',
+  'Beginner basics': 'Basis voor beginners',
+  'Start easy': 'Rustig beginnen',
+  'Practise basics': 'Oefen de basis',
   'Today': 'Vandaag',
   'Learn': 'Leren',
   'Review': 'Herhalen',
@@ -184,6 +191,7 @@ const EXACT_NL = {
   'No material found': 'Geen oefenmateriaal gevonden',
   'Try a broader topic or the smart session.': 'Kies een breder onderwerp of start de slimme sessie.',
   'All types': 'Alle typen',
+  'Beginner A0': 'Beginner A0',
   'Nouns': 'Zelfstandige naamwoorden',
   'Adjectives': 'Bijvoeglijke naamwoorden',
   'Expressions': 'Uitdrukkingen',
@@ -986,7 +994,7 @@ Object.assign(EXACT_NL, {
 });
 
 
-// Complete interface translations added after the 1.8.2 localisation audit.
+// Complete interface translations added after the 1.9 localisation audit.
 Object.assign(EXACT_NL, {
   "focused minutes to your daily goal.": "gerichte minuten tot je dagdoel.",
   "WHY THIS FORM WORKS": "WAAROM DEZE VORM WERKT",
@@ -1365,7 +1373,7 @@ Object.assign(EXACT_NL, {
 });
 
 
-// Final full-interface audit additions for 1.8.2. These cover labels that are
+// Final full-interface audit additions for 1.9. These cover labels that are
 // created around dynamic Polish content or inside modal controls.
 Object.assign(EXACT_NL, {
   'Close listening lab': 'Luisterlab sluiten',

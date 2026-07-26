@@ -5,9 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.8.2';
-import { getTodayKey } from './storage.js?v=1.8.2';
-import { explainPolishDifference } from './polish.js?v=1.8.2';
+} from './data.js?v=1.9';
+import { getTodayKey } from './storage.js?v=1.9';
+import { explainPolishDifference } from './polish.js?v=1.9';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -2421,6 +2421,8 @@ export const getCoachInsights = (state) => {
     insights.push({
       title: `${due} item${due === 1 ? '' : 's'} need a timely review`,
       detail: 'Reviewing now protects them before the memory gets expensive to rebuild.',
+      nlTitle: `${due} onderdeel${due === 1 ? '' : 'en'} moet op tijd worden herhaald`,
+      nlDetail: 'Door nu te herhalen bescherm je wat je hebt geleerd voordat het meer moeite kost om het opnieuw op te bouwen.',
       type: 'review',
     });
   }
@@ -2430,6 +2432,8 @@ export const getCoachInsights = (state) => {
     insights.push({
       title: `“${item.pl}” is becoming a confusion point`,
       detail: `${progress.lapses || 1} lapse${progress.lapses === 1 ? '' : 's'} detected. It will reappear in a new sentence, not as an isolated card.`,
+      nlTitle: `“${item.pl}” wordt een verwarringspunt`,
+      nlDetail: `${progress.lapses || 1} keer weggezakt. Het verschijnt opnieuw in een nieuwe zin, niet als losse kaart.`,
       type: 'weak',
     });
   }
@@ -2438,6 +2442,8 @@ export const getCoachInsights = (state) => {
     insights.push({
       title: `Your weakest pattern is ${conceptEntries[0].concept.title.toLowerCase()}`,
       detail: 'The next session will contrast it with a pattern you already know.',
+      nlTitle: 'Je zwakste grammaticapatroon heeft extra aandacht nodig',
+      nlDetail: 'De volgende sessie vergelijkt dit met een patroon dat je al kent.',
       type: 'grammar',
     });
   }
@@ -2446,6 +2452,8 @@ export const getCoachInsights = (state) => {
     insights.push({
       title: 'Start with phrases that rescue real conversations',
       detail: 'Slower, repeat, and “how do you say…” let you stay in Polish even before you know much Polish.',
+      nlTitle: 'Begin met zinnen die echte gesprekken redden',
+      nlDetail: '“Langzamer”, “herhaal” en “hoe zeg je…” helpen je in het Pools te blijven, ook als je nog niet veel Pools kent.',
       type: 'strategy',
     });
   }
@@ -2454,6 +2462,8 @@ export const getCoachInsights = (state) => {
     insights.push({
       title: 'Your interests are already part of the curriculum',
       detail: 'Motorsport, snowboarding, festivals, and bonsai create memorable family small talk.',
+      nlTitle: 'Je interesses maken al deel uit van de leerroute',
+      nlDetail: 'Motorsport, snowboarden, festivals en bonsai leveren herkenbare gespreksonderwerpen met familie op.',
       type: 'personal',
     });
   }

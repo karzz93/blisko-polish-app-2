@@ -1,1 +1,1 @@
-Blisko 1.9 beginner basics and compact progress screen
+Blisko 1.9.1 interactive progress-card details

@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.9';
+} from './data.js?v=1.9.1';
 import {
   loadState,
   saveState,
@@ -27,7 +27,7 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.9';
+} from './storage.js?v=1.9.1';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -66,8 +66,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.9';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.9';
+} from './engine.js?v=1.9.1';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.9.1';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -76,13 +76,13 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.9';
+} from './polish.js?v=1.9.1';
 import {
   localizeTree,
   startLocalizationObserver,
   registerPolishTexts,
   translateUiText,
-} from './i18n.js?v=1.9';
+} from './i18n.js?v=1.9.1';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -2224,26 +2224,26 @@ function renderProgress() {
             <span class="progress-stat-label">${escapeHtml(explanationText('ESTIMATED LEVEL', 'GESCHAT NIVEAU'))}</span>
             <span class="progress-stat-value"><strong>${escapeHtml(levelLabel)}</strong></span>
             <span class="progress-stat-detail">${escapeHtml(explanationText('Based on active recall', 'Gebaseerd op actief terughalen'))}</span>
-            <span class="progress-stat-icon">${icon('flag')}</span>
+            <button class="progress-stat-icon" type="button" data-action="open-progress-detail" data-detail="level" aria-label="${escapeHtml(explanationText('View level details', 'Bekijk niveaudetails'))}" title="${escapeHtml(explanationText('View level details', 'Bekijk niveaudetails'))}">${icon('flag')}</button>
           </article>
-          <button class="card progress-stat-card" type="button" data-action="go-view" data-view="library">
+          <article class="card progress-stat-card">
             <span class="progress-stat-label">${escapeHtml(explanationText('WORDS LEARNED', 'WOORDEN GELEERD'))}</span>
             <span class="progress-stat-value"><strong>${metrics.masteredWords}</strong><b>/ ${totalWords}</b></span>
             <span class="progress-stat-detail">${learningWords} ${escapeHtml(explanationText('still learning', 'nog aan het leren'))}</span>
-            <span class="progress-stat-icon">${icon('book')}</span>
-          </button>
+            <button class="progress-stat-icon" type="button" data-action="open-progress-detail" data-detail="words" aria-label="${escapeHtml(explanationText('View vocabulary details', 'Bekijk details van je woordenschat'))}" title="${escapeHtml(explanationText('View vocabulary details', 'Bekijk details van je woordenschat'))}">${icon('book')}</button>
+          </article>
           <article class="card progress-stat-card">
             <span class="progress-stat-label">${escapeHtml(explanationText('STREAK', 'REEKS'))}</span>
             <span class="progress-stat-value"><strong>🔥 ${state.stats.streak || 0}</strong></span>
             <span class="progress-stat-detail">${activeDays}/14 ${escapeHtml(explanationText('active days recently', 'recente actieve dagen'))}</span>
-            <span class="progress-stat-icon">${icon('calendar')}</span>
+            <button class="progress-stat-icon" type="button" data-action="open-progress-detail" data-detail="streak" aria-label="${escapeHtml(explanationText('View activity calendar', 'Bekijk activiteitskalender'))}" title="${escapeHtml(explanationText('View activity calendar', 'Bekijk activiteitskalender'))}">${icon('calendar')}</button>
           </article>
-          <button class="card progress-stat-card" type="button" data-action="go-view" data-view="talk">
+          <article class="card progress-stat-card">
             <span class="progress-stat-label">${escapeHtml(explanationText('CONVERSATION READY', 'KLAAR VOOR GESPREKKEN'))}</span>
             <span class="progress-stat-value"><strong>${Math.round(metrics.conversationReadiness * 100)}%</strong></span>
             <span class="progress-stat-detail">${readyCount}/${metrics.canDo.length} ${escapeHtml(explanationText('practical abilities ready', 'praktische vaardigheden gereed'))}</span>
-            <span class="progress-stat-icon">${icon('message')}</span>
-          </button>
+            <button class="progress-stat-icon" type="button" data-action="open-progress-detail" data-detail="conversation" aria-label="${escapeHtml(explanationText('View conversation readiness details', 'Bekijk details van gespreksgereedheid'))}" title="${escapeHtml(explanationText('View conversation readiness details', 'Bekijk details van gespreksgereedheid'))}">${icon('message')}</button>
+          </article>
         </div>
 
         <article class="card snapshot-skills-card compact-skills-card">
@@ -2311,6 +2311,282 @@ function renderProgress() {
     </div>
   `;
 }
+
+
+const progressDetailSkillLabels = () => ({
+  reading: explanationText('Reading', 'Lezen'),
+  listening: explanationText('Listening', 'Luisteren'),
+  guidedProduction: explanationText('Building sentences', 'Zinnen bouwen'),
+  freeProduction: explanationText('Speaking from memory', 'Spreken uit het hoofd'),
+  pronunciation: explanationText('Pronunciation', 'Uitspraak'),
+});
+
+const progressCanDoLabel = (taskId) => ({
+  greet: explanationText('Greet family and exchange basic courtesies', 'Familie begroeten en eenvoudige beleefdheden uitwisselen'),
+  repair: explanationText('Ask someone to repeat or speak more slowly', 'Vragen of iemand iets herhaalt of langzamer spreekt'),
+  table: explanationText('Handle a short exchange at the family table', 'Een kort gesprek aan tafel voeren'),
+  work: explanationText('Answer a simple question about work or hobbies', 'Een eenvoudige vraag over werk of hobby’s beantwoorden'),
+  followup: explanationText('Understand and answer one natural follow-up question', 'Een natuurlijke vervolgvraag begrijpen en beantwoorden'),
+}[taskId] || taskId);
+
+const progressLevelDescription = (level) => ({
+  A0: explanationText(
+    'Blisko’s starter stage before CEFR A1. You are building recognition, basic recall, and a small set of useful family phrases.',
+    'Blisko’s beginnersfase vóór ERK-niveau A1. Je bouwt herkenning, actief terughalen en een kleine set bruikbare familiezinnen op.',
+  ),
+  A1: explanationText(
+    'You can use and understand very common expressions about yourself, family, food, and immediate needs when the other person speaks clearly.',
+    'Je kunt zeer bekende uitdrukkingen over jezelf, familie, eten en directe behoeften gebruiken en begrijpen wanneer de ander duidelijk spreekt.',
+  ),
+  A2: explanationText(
+    'You can manage short routine exchanges about familiar topics and describe simple aspects of daily life.',
+    'Je kunt korte, alledaagse gesprekken over bekende onderwerpen voeren en eenvoudige aspecten van het dagelijks leven beschrijven.',
+  ),
+  B1: explanationText(
+    'You can handle most familiar family situations, explain experiences, and keep a conversation moving with some independence.',
+    'Je kunt de meeste bekende familiesituaties aan, ervaringen uitleggen en een gesprek redelijk zelfstandig gaande houden.',
+  ),
+  B2: explanationText(
+    'You can interact with good fluency, follow detailed conversation, and explain viewpoints without much strain.',
+    'Je kunt redelijk vloeiend praten, gedetailleerde gesprekken volgen en standpunten uitleggen zonder veel moeite.',
+  ),
+  C1: explanationText(
+    'You can use Polish flexibly and spontaneously across complex social and family situations.',
+    'Je kunt Pools flexibel en spontaan gebruiken in complexe sociale en familiesituaties.',
+  ),
+}[level] || '');
+
+const isActiveProgressDay = (day = {}) => Number(day.minutes || 0) > 0
+  || Number(day.reviews || 0) > 0
+  || Number(day.speaking || 0) > 0
+  || Number(day.conversations || 0) > 0
+  || Number(day.games || 0) > 0;
+
+const progressCalendarData = (days = 42) => {
+  const activity = getActivityDays(state, days);
+  const firstDate = activity[0]?.date ? new Date(`${activity[0].date}T12:00:00`) : new Date();
+  const mondayOffset = (firstDate.getDay() + 6) % 7;
+  return { activity, leading: Array.from({ length: mondayOffset }, () => null) };
+};
+
+const progressDateLabel = (dateKey, options = { weekday: 'short', day: 'numeric', month: 'short' }) => {
+  try {
+    return new Intl.DateTimeFormat(explanationLanguage() === 'nl' ? 'nl-NL' : 'en-GB', options).format(new Date(`${dateKey}T12:00:00`));
+  } catch {
+    return dateKey;
+  }
+};
+
+const openProgressDetail = (detail) => {
+  const metrics = getMetrics(state);
+  const totalWords = WORDS.length;
+  const startedWords = WORDS.filter((word) => Number(state.progress.items[word.id]?.reps || 0) > 0).length;
+  const learningWords = Math.max(0, startedWords - metrics.masteredWords);
+  const unseenWords = Math.max(0, totalWords - startedWords);
+  const dueCount = getDueItems(state).length;
+  const levelLabel = metrics.cefr === 'Pre-A1' ? 'A0' : metrics.cefr;
+  const nextLevel = metrics.nextCefr || 'A1';
+  const evidence = Math.round(metrics.evidenceConfidence * 100);
+  const skillLabels = progressDetailSkillLabels();
+  const snapshotSkills = [
+    { id: 'reading', value: metrics.reading, attempts: metrics.skills.reading.attempts },
+    { id: 'listening', value: metrics.listening, attempts: metrics.skills.listening.attempts },
+    { id: 'guidedProduction', value: metrics.guidedProduction, attempts: metrics.skills.guidedProduction.attempts },
+    { id: 'freeProduction', value: metrics.freeProduction, attempts: metrics.skills.freeProduction.attempts },
+    { id: 'pronunciation', value: metrics.pronunciation, attempts: metrics.skills.pronunciation.attempts },
+  ];
+  const closeButton = `<button class="modal-close" type="button" data-action="modal-close" aria-label="${escapeHtml(explanationText('Close', 'Sluiten'))}">${icon('close')}</button>`;
+
+  if (detail === 'level') {
+    const readinessList = metrics.canDo.map((task) => `
+      <li class="progress-detail-check ${task.ready ? 'ready' : ''}">
+        <span>${task.ready ? icon('check') : icon('clock')}</span>
+        <div><strong>${escapeHtml(progressCanDoLabel(task.id))}</strong><small>${escapeHtml(task.ready ? explanationText('Currently demonstrated', 'Momenteel aangetoond') : explanationText('Still developing', 'Nog in ontwikkeling'))}</small></div>
+      </li>
+    `).join('');
+    const skillRows = snapshotSkills.map((skill) => `
+      <div class="progress-detail-skill-row">
+        <span><strong>${escapeHtml(skillLabels[skill.id])}</strong><small>${skill.attempts} ${escapeHtml(explanationText('checks', 'metingen'))}</small></span>
+        <div class="snapshot-skill-track"><i style="width:${Math.round(skill.value * 100)}%"></i></div>
+        <b>${Math.round(skill.value * 100)}%</b>
+      </div>
+    `).join('');
+    openModal(`
+      <header class="modal-header">
+        <div><p class="eyebrow">${escapeHtml(explanationText('LEVEL DETAILS', 'NIVEAUDETAILS'))}</p><h2>${escapeHtml(explanationText(`Estimated level: ${levelLabel}`, `Geschat niveau: ${levelLabel}`))}</h2><p>${escapeHtml(explanationText(`${evidence}% measurement confidence`, `${evidence}% betrouwbaarheid van de meting`))}</p></div>
+        ${closeButton}
+      </header>
+      <div class="modal-body progress-detail-body">
+        <section class="progress-detail-hero level-detail-hero">
+          <span class="progress-level-badge">${escapeHtml(levelLabel)}</span>
+          <div class="progress-detail-hero-copy">
+            <span class="progress-overline">${escapeHtml(explanationText(`PROGRESS TO ${nextLevel}`, `VOORTGANG NAAR ${nextLevel}`))}</span>
+            <div class="progress-detail-main-value">${Math.round(metrics.cefrProgress * 100)}%</div>
+            <div class="progress-detail-meter"><span style="width:${Math.round(metrics.cefrProgress * 100)}%"></span></div>
+            <p>${escapeHtml(progressLevelDescription(levelLabel))}</p>
+          </div>
+        </section>
+        <div class="progress-detail-columns">
+          <section class="progress-detail-panel">
+            <h3>${escapeHtml(explanationText('What you can do now', 'Wat je nu kunt'))}</h3>
+            <ul class="progress-detail-checklist">${readinessList}</ul>
+          </section>
+          <section class="progress-detail-panel">
+            <h3>${escapeHtml(explanationText('Evidence by skill', 'Onderbouwing per vaardigheid'))}</h3>
+            <div class="progress-detail-skill-list">${skillRows}</div>
+            <p class="progress-detail-note">${escapeHtml(explanationText('Your level is based most heavily on active recall, listening, and free answers. Opening a lesson alone does not raise it.', 'Je niveau is vooral gebaseerd op actief terughalen, luisteren en vrije antwoorden. Alleen een les openen verhoogt het niveau niet.'))}</p>
+          </section>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button class="ghost-button" type="button" data-action="modal-close">${escapeHtml(explanationText('Close', 'Sluiten'))}</button>
+        <button class="primary-button" type="button" data-action="open-placement" data-mode="${state.onboarding?.placement?.completedAt ? 'recalibration' : 'placement'}">${escapeHtml(state.onboarding?.placement?.completedAt ? explanationText('Recalibrate level', 'Niveau opnieuw meten') : explanationText('Run level check', 'Doe de niveautest'))}</button>
+      </footer>
+    `, { wide: true, label: explanationText('Level details', 'Niveaudetails') });
+    return;
+  }
+
+  if (detail === 'streak') {
+    const { activity, leading } = progressCalendarData(42);
+    const activeDays = activity.filter(isActiveProgressDay).length;
+    const totalMinutes = activity.reduce((sum, day) => sum + Number(day.minutes || 0), 0);
+    const weekdayFormatter = new Intl.DateTimeFormat(explanationLanguage() === 'nl' ? 'nl-NL' : 'en-GB', { weekday: 'narrow' });
+    const monday = new Date('2026-01-05T12:00:00');
+    const weekdays = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + index);
+      return weekdayFormatter.format(date);
+    });
+    const todayKey = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    const calendarCells = [...leading, ...activity].map((day) => {
+      if (!day) return '<span class="streak-calendar-day empty" aria-hidden="true"></span>';
+      const active = isActiveProgressDay(day);
+      const goalMet = Number(day.minutes || 0) >= Math.max(5, Number(state.profile.dailyGoal || 15));
+      const details = [
+        `${Number(day.minutes || 0)} min`,
+        `${Number(day.reviews || 0)} ${explanationText('reviews', 'herhalingen')}`,
+        `${Number(day.speaking || 0)} ${explanationText('speaking attempts', 'spreekpogingen')}`,
+      ].join(' · ');
+      return `<span class="streak-calendar-day ${active ? 'active' : 'inactive'} ${goalMet ? 'goal-met' : ''} ${day.date === todayKey ? 'today' : ''}" title="${escapeHtml(`${progressDateLabel(day.date, { weekday: 'long', day: 'numeric', month: 'long' })} · ${details}`)}"><b>${Number(day.date.slice(-2))}</b><i></i></span>`;
+    }).join('');
+    openModal(`
+      <header class="modal-header">
+        <div><p class="eyebrow">${escapeHtml(explanationText('ACTIVITY CALENDAR', 'ACTIVITEITSKALENDER'))}</p><h2>${escapeHtml(explanationText('Your study streak', 'Jouw leerreeks'))}</h2><p>${escapeHtml(explanationText('Active and inactive days from the last six weeks.', 'Actieve en inactieve dagen van de afgelopen 6 weken.'))}</p></div>
+        ${closeButton}
+      </header>
+      <div class="modal-body progress-detail-body">
+        <div class="progress-detail-summary-grid">
+          <span><strong>🔥 ${state.stats.streak || 0}</strong><small>${escapeHtml(explanationText('current streak', 'huidige reeks'))}</small></span>
+          <span><strong>${state.stats.bestStreak || 0}</strong><small>${escapeHtml(explanationText('best streak', 'beste reeks'))}</small></span>
+          <span><strong>${activeDays}/42</strong><small>${escapeHtml(explanationText('active days', 'actieve dagen'))}</small></span>
+          <span><strong>${totalMinutes}</strong><small>${escapeHtml(explanationText('minutes in six weeks', 'minuten in 6 weken'))}</small></span>
+        </div>
+        <section class="progress-detail-panel streak-calendar-panel">
+          <div class="streak-calendar-legend"><span><i class="active"></i>${escapeHtml(explanationText('Active', 'Actief'))}</span><span><i class="goal"></i>${escapeHtml(explanationText('Daily goal reached', 'Dagdoel behaald'))}</span><span><i class="inactive"></i>${escapeHtml(explanationText('Inactive', 'Inactief'))}</span></div>
+          <div class="streak-calendar-weekdays">${weekdays.map((day) => `<span>${escapeHtml(day)}</span>`).join('')}</div>
+          <div class="streak-calendar-grid">${calendarCells}</div>
+          <p class="progress-detail-note">${escapeHtml(explanationText('A day counts as active when you complete practice, a review, speaking, a conversation, or a game.', 'Een dag telt als actief wanneer je oefent, herhaalt, spreekt, een gesprek voert of een spel speelt.'))}</p>
+        </section>
+      </div>
+      <footer class="modal-footer"><button class="primary-button" type="button" data-action="modal-close">${escapeHtml(explanationText('Done', 'Klaar'))}</button></footer>
+    `, { wide: true, label: explanationText('Activity calendar', 'Activiteitskalender') });
+    return;
+  }
+
+  if (detail === 'words') {
+    const recentWords = WORDS
+      .map((word) => ({ word, progress: state.progress.items[word.id] }))
+      .filter(({ progress }) => progress)
+      .sort((a, b) => new Date(b.progress.lastReviewedAt || b.progress.lastSeenAt || 0) - new Date(a.progress.lastReviewedAt || a.progress.lastSeenAt || 0))
+      .slice(0, 6);
+    const weakCount = WORDS.filter((word) => {
+      const progress = state.progress.items[word.id];
+      return progress && (Number(progress.lapses || 0) > 0 || Number(progress.confidence || 0) < 0.4);
+    }).length;
+    openModal(`
+      <header class="modal-header">
+        <div><p class="eyebrow">${escapeHtml(explanationText('VOCABULARY DETAILS', 'DETAILS WOORDENSCHAT'))}</p><h2>${escapeHtml(explanationText('Your vocabulary progress', 'Jouw voortgang met woorden'))}</h2><p>${escapeHtml(explanationText('What is learned, still developing, and ready for review.', 'Wat geleerd is, nog in ontwikkeling is en klaarstaat voor herhaling.'))}</p></div>
+        ${closeButton}
+      </header>
+      <div class="modal-body progress-detail-body">
+        <div class="progress-detail-summary-grid">
+          <span><strong>${metrics.masteredWords}</strong><small>${escapeHtml(explanationText('learned', 'geleerd'))}</small></span>
+          <span><strong>${learningWords}</strong><small>${escapeHtml(explanationText('learning', 'aan het leren'))}</small></span>
+          <span><strong>${unseenWords}</strong><small>${escapeHtml(explanationText('not started', 'nog niet gestart'))}</small></span>
+          <span><strong>${dueCount}</strong><small>${escapeHtml(explanationText('due for review', 'klaar voor herhaling'))}</small></span>
+        </div>
+        <div class="progress-detail-columns">
+          <section class="progress-detail-panel">
+            <h3>${escapeHtml(explanationText('How a word becomes learned', 'Wanneer een woord als geleerd telt'))}</h3>
+            <p>${escapeHtml(explanationText('A word counts as learned after at least two successful reviews and enough confidence in active recall. Seeing it once is not enough.', 'Een woord telt als geleerd na minimaal 2 succesvolle herhalingen en voldoende vertrouwen bij actief terughalen. Het 1 keer zien is niet genoeg.'))}</p>
+            <div class="vocabulary-definition-list">
+              <span><b>${metrics.knownPhrases}</b>${escapeHtml(explanationText('usable phrases', 'bruikbare zinnen'))}</span>
+              <span><b>${weakCount}</b>${escapeHtml(explanationText('words needing extra attention', 'woorden die extra aandacht nodig hebben'))}</span>
+              <span><b>${startedWords}</b>${escapeHtml(explanationText('words encountered', 'woorden al geoefend'))}</span>
+            </div>
+          </section>
+          <section class="progress-detail-panel">
+            <h3>${escapeHtml(explanationText('Most recently practised', 'Meest recent geoefend'))}</h3>
+            ${recentWords.length ? `<div class="recent-vocabulary-list">${recentWords.map(({ word, progress }) => `
+              <button type="button" data-action="open-word" data-word="${word.id}"><span><strong lang="pl">${escapeHtml(word.pl)}</strong><small>${escapeHtml(primaryTranslation(word))}</small></span><b>${Math.round(Number(progress.confidence || 0) * 100)}%</b></button>
+            `).join('')}</div>` : `<p class="progress-detail-empty">${escapeHtml(explanationText('No words practised yet. Start with the beginner basics session.', 'Je hebt nog geen woorden geoefend. Begin met de sessie Basis voor beginners.'))}</p>`}
+          </section>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button class="ghost-button" type="button" data-action="modal-close">${escapeHtml(explanationText('Close', 'Sluiten'))}</button>
+        <button class="secondary-button" type="button" data-action="progress-detail-go-view" data-view="library">${escapeHtml(explanationText('Open word library', 'Open woordenbibliotheek'))}</button>
+        <button class="primary-button" type="button" data-action="start-vocabulary-boost">${escapeHtml(explanationText('Practise 12 words', 'Oefen 12 woorden'))}</button>
+      </footer>
+    `, { wide: true, label: explanationText('Vocabulary details', 'Details woordenschat') });
+    return;
+  }
+
+  if (detail === 'conversation') {
+    const readyCount = metrics.canDo.filter((task) => task.ready).length;
+    const canDoRows = metrics.canDo.map((task) => `
+      <li class="progress-detail-check ${task.ready ? 'ready' : ''}">
+        <span>${task.ready ? icon('check') : icon('clock')}</span>
+        <div><strong>${escapeHtml(progressCanDoLabel(task.id))}</strong><small>${escapeHtml(task.ready ? explanationText('Ready', 'Gereed') : explanationText('Keep practising', 'Blijf oefenen'))}</small></div>
+      </li>
+    `).join('');
+    openModal(`
+      <header class="modal-header">
+        <div><p class="eyebrow">${escapeHtml(explanationText('CONVERSATION DETAILS', 'DETAILS GESPREKSVAARDIGHEID'))}</p><h2>${escapeHtml(explanationText('Conversation readiness', 'Gereedheid voor gesprekken'))}</h2><p>${escapeHtml(explanationText('A practical estimate of what you can currently do with family.', 'Een praktische schatting van wat je momenteel met familie kunt doen.'))}</p></div>
+        ${closeButton}
+      </header>
+      <div class="modal-body progress-detail-body">
+        <section class="progress-detail-hero conversation-detail-hero">
+          <span class="conversation-readiness-ring" style="--value:${Math.round(metrics.conversationReadiness * 100)}"><strong>${Math.round(metrics.conversationReadiness * 100)}%</strong></span>
+          <div class="progress-detail-hero-copy">
+            <span class="progress-overline">${escapeHtml(explanationText('PRACTICAL ABILITIES', 'PRAKTISCHE VAARDIGHEDEN'))}</span>
+            <div class="progress-detail-main-value">${readyCount}/${metrics.canDo.length}</div>
+            <p>${escapeHtml(explanationText('Readiness combines phrase memory, listening, free speaking, topic knowledge, and completed conversation turns.', 'De gereedheid combineert zinsgeheugen, luisteren, vrij spreken, onderwerpkennis en gevoerde gespreksbeurten.'))}</p>
+          </div>
+        </section>
+        <div class="progress-detail-columns">
+          <section class="progress-detail-panel">
+            <h3>${escapeHtml(explanationText('Abilities', 'Vaardigheden'))}</h3>
+            <ul class="progress-detail-checklist">${canDoRows}</ul>
+          </section>
+          <section class="progress-detail-panel">
+            <h3>${escapeHtml(explanationText('Practice evidence', 'Onderbouwing uit oefeningen'))}</h3>
+            <div class="progress-detail-summary-grid compact-three">
+              <span><strong>${state.stats.conversationTurns || 0}</strong><small>${escapeHtml(explanationText('conversation turns', 'gespreksbeurten'))}</small></span>
+              <span><strong>${state.stats.speakingAttempts || 0}</strong><small>${escapeHtml(explanationText('speaking attempts', 'spreekpogingen'))}</small></span>
+              <span><strong>${metrics.unlockedConversations}</strong><small>${escapeHtml(explanationText('scenarios unlocked', 'scenario’s ontgrendeld'))}</small></span>
+            </div>
+            <p class="progress-detail-note">${escapeHtml(explanationText('The score rises fastest through listening and answering aloud without seeing the full answer first.', 'De score stijgt het snelst door te luisteren en hardop te antwoorden zonder eerst het volledige antwoord te zien.'))}</p>
+          </section>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button class="ghost-button" type="button" data-action="modal-close">${escapeHtml(explanationText('Close', 'Sluiten'))}</button>
+        <button class="primary-button" type="button" data-action="progress-detail-go-view" data-view="talk">${escapeHtml(explanationText('Practise a conversation', 'Oefen een gesprek'))}</button>
+      </footer>
+    `, { wide: true, label: explanationText('Conversation readiness details', 'Details gespreksgereedheid') });
+  }
+};
 
 function renderLibrary() {
   return `
@@ -4799,6 +5075,13 @@ const handleAction = (event) => {
 
   switch (action) {
     case 'go-view':
+      navigate(target.dataset.view);
+      break;
+    case 'open-progress-detail':
+      openProgressDetail(target.dataset.detail);
+      break;
+    case 'progress-detail-go-view':
+      closeModal();
       navigate(target.dataset.view);
       break;
     case 'start-session':

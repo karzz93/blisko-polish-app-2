@@ -1,9 +1,7 @@
-BLISKO 1.9 - BEGINNER BASICS + COMPACT PROGRESS
+BLISKO 1.9.1 - INTERACTIVE PROGRESS DETAILS
 
-Upload every file in this folder to replace the existing app.
+Upload the full contents of this folder to the same web location as the previous build.
 
-Version 1.9 adds a beginner-first A0 practice path, 85 basic everyday words, and 48 short practical sentences. The Learn screen now includes a dedicated Beginner basics session.
+Version 1.9.1 makes all four summary cards on the Progress screen interactive. The corner icons open detailed level, vocabulary, streak-calendar, and conversation-readiness views while preserving the compact overview.
 
-The Progress screen is intentionally calmer: it shows level, learned words, streak, conversation readiness, core skill bars, and the best next step. Activity and estimate details are placed inside one collapsed More details section.
-
-After deployment, open the app once while online so the service worker can install the 1.9 shell. If an older screen remains visible, use Settings > Repair downloaded app files once. Learning progress is not deleted.
+After deployment, open the app once while online so the service worker can install the 1.9.1 shell. If an older screen remains visible, use Settings > Repair downloaded app files once. Learning progress is not deleted.

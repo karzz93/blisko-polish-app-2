@@ -578,6 +578,12 @@ const EXACT_NL = {
   'No confusion pattern yet': 'Nog geen verwarringspatroon',
   'No hint baseline yet': 'Nog geen basislijn voor hints',
   'Build a real listening baseline': 'Bouw een echte luisterbasislijn op',
+  'Need a nudge': 'Een zetje nodig',
+  'Give me a starting point': 'Geef me een startpunt',
+  'Reveal one useful word': 'Toon één bruikbaar woord',
+  'Explain the exact rule': 'Leg de precieze regel uit',
+  'Starting point': 'Startpunt',
+  'Do this now': 'Doe dit nu',
 };
 
 Object.assign(EXACT_NL, {
@@ -1092,7 +1098,6 @@ Object.assign(EXACT_NL, {
   "Replay it once more and listen for": "Speel het nog één keer af en luister naar",
   "; use its job in the sentence. The letter stays hidden.": "; gebruik de functie in de zin. De letter blijft verborgen.",
   "; the answer begins with “": "; het antwoord begint met “",
-  "Use this frame:": "Gebruik dit patroon:",
   ". Use its role in the sentence; the letter itself stays hidden until the final support step.": ". Gebruik de functie in de zin; de letter zelf blijft verborgen tot de laatste hulpstap.",
   "The word opens with “": "Het woord begint met “",
   "”. Complete the shape:": "”. Maak de vorm af:",

@@ -6495,7 +6495,7 @@ body.session-keyboard-open .session-footer-inner.pre-answer .ghost-button {
 }
 
 
-/* Blisko 1.9.1: interactive progress-card details */
+/* Blisko 1.9.3: interactive progress-card details */
 button.progress-stat-icon {
   border: 0;
   font: inherit;
@@ -6625,4 +6625,83 @@ button.progress-stat-icon:focus-visible {
   .streak-calendar-day { min-height: 34px; border-radius: 10px; }
   .vocabulary-definition-list { grid-template-columns: 1fr; }
   .progress-detail-summary-grid.compact-three { grid-template-columns: 1fr; }
+}
+
+
+/* Blisko 1.9.3: actual foreground study timer */
+[data-live-goal-remaining],
+#sidebar-goal-label {
+  font-variant-numeric: tabular-nums;
+}
+[data-live-goal-remaining] {
+  min-width: 3.4ch;
+  display: inline-block;
+  text-align: left;
+}
+
+
+/* Blisko 1.9.3: hints show a concrete starting point and one immediate action. */
+.hint-working-frame {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.hint-working-frame > span {
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.hint-working-frame > strong {
+  color: var(--text);
+  font-size: clamp(1.02rem, 3.7vw, 1.3rem);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.hint-next-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+}
+
+.hint-next-action > span {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  min-width: 25px;
+  height: 25px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+  color: var(--accent);
+}
+
+.hint-next-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hint-next-action p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.hint-next-action strong {
+  color: var(--text);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }

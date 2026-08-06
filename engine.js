@@ -5,9 +5,9 @@ import {
   REAL_LIFE_SCENARIOS,
   TOPICS,
   PATTERNS,
-} from './data.js?v=1.9.1';
-import { getTodayKey } from './storage.js?v=1.9.1';
-import { explainPolishDifference } from './polish.js?v=1.9.1';
+} from './data.js?v=1.9.3';
+import { getTodayKey } from './storage.js?v=1.9.3';
+import { explainPolishDifference } from './polish.js?v=1.9.3';
 
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
@@ -657,8 +657,8 @@ const isWordToken = (token = '') => /[A-Za-zÀ-žĄĆĘŁŃÓŚŹŻąćęłńó�
 const joinDisplayTokens = (tokens = []) => tokens
   .join(' ')
   .replace(/\s+([,.!?;:])/g, '$1')
-  .replace(/([({])\s+/g, '$1')
-  .replace(/\s+([)}])/g, '$1')
+  .replace(/([({\[“‘])\s+/g, '$1')
+  .replace(/\s+([)}\]”’])/g, '$1')
   .trim();
 
 const normalizedToken = (token = '') => normalizeText(token, { loose: true });
@@ -733,6 +733,7 @@ const redactAnswerSequence = (text = '', answer = '', replacement = '[target for
       index += targetWords.length - 1;
     }
   }
+  if (!matches.length) return String(text || '');
   for (let index = matches.length - 1; index >= 0; index -= 1) {
     const match = matches[index];
     tokens.splice(match.start, match.end - match.start + 1, replacement);
@@ -746,6 +747,8 @@ const protectHintAnswer = (hint = {}, answer = '') => {
     ...hint,
     en: redactAnswerSequence(hint.en || '', answer, '[target form]'),
     nl: redactAnswerSequence(hint.nl || '', answer, '[doelvorm]'),
+    actionEn: redactAnswerSequence(hint.actionEn || '', answer, '[target form]'),
+    actionNl: redactAnswerSequence(hint.actionNl || '', answer, '[doelvorm]'),
   };
   if (hint.structure) protectedHint.structure = redactAnswerSequence(hint.structure, answer, '___');
   if (hint.title) protectedHint.title = redactAnswerSequence(hint.title, answer, 'Support');
@@ -769,6 +772,143 @@ const sentenceChunkCount = (answer = '') => {
   if (count <= 2) return 1;
   if (count <= 5) return 2;
   return 3;
+};
+
+
+const localizedHintTitle = (en, nl) => ({ title: en, titleEn: en, titleNl: nl });
+
+const getExerciseMeaning = (exercise = {}, item = {}, interfaceLanguage = 'en', targetLanguage = 'pl') => {
+  if (targetLanguage !== 'pl') return String(item.pl || exercise.prompt || '').trim();
+  const translations = exercise.translations || {};
+  return String(
+    translations[interfaceLanguage]
+    || item[interfaceLanguage]
+    || translations.en
+    || translations.nl
+    || item.en
+    || item.nl
+    || '',
+  ).trim();
+};
+
+const splitIntoMeaningBlocks = (text = '', blockCount = 1) => {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const clauses = clean.split(/(?<=[,;:.!?])\s+|\s+(?:and|but|or|en|maar|of)\s+/i).map((part) => part.trim()).filter(Boolean);
+  if (clauses.length >= blockCount) return clauses.slice(0, blockCount);
+  const words = clean.split(/\s+/).filter(Boolean);
+  const safeCount = Math.max(1, Math.min(blockCount, words.length));
+  const blocks = [];
+  let cursor = 0;
+  for (let index = 0; index < safeCount; index += 1) {
+    const remainingWords = words.length - cursor;
+    const remainingBlocks = safeCount - index;
+    const size = Math.ceil(remainingWords / remainingBlocks);
+    blocks.push(words.slice(cursor, cursor + size).join(' '));
+    cursor += size;
+  }
+  return blocks.filter(Boolean);
+};
+
+const formatMeaningRoute = (meaning = '', blockCount = 1) => splitIntoMeaningBlocks(meaning, blockCount)
+  .map((block) => `[${block}]`)
+  .join(' → ');
+
+const buildStarterFrame = (answer = '', language = 'pl', revealIndexes = []) => {
+  const tokens = displayTokens(answer);
+  const functionWords = functionWordsFor(language);
+  let wordIndex = -1;
+  return joinDisplayTokens(tokens.map((token) => {
+    if (!isWordToken(token)) return token;
+    wordIndex += 1;
+    const normalized = normalizedToken(token);
+    if (wordIndex === 0 || revealIndexes.includes(wordIndex) || functionWords.has(normalized)) return token;
+    return maskToken(token, { keepFirst: true });
+  }));
+};
+
+const hintCommonPrefixLength = (left = '', right = '') => {
+  const a = normalizeText(left, { loose: true });
+  const b = normalizeText(right, { loose: true });
+  let index = 0;
+  while (index < a.length && index < b.length && a[index] === b[index]) index += 1;
+  return index;
+};
+
+const findTokenGloss = (item = {}, token = '', interfaceLanguage = 'en') => {
+  const candidates = (item.words || []).map((id) => WORD_MAP.get(id)).filter(Boolean);
+  if (item.itemType === 'word' || (!candidates.length && item.pl)) candidates.push(item);
+  const normalized = normalizeText(token, { loose: true });
+  const match = candidates
+    .map((candidate) => ({
+      candidate,
+      score: Math.max(
+        normalized === normalizeText(candidate.pl || '', { loose: true }) ? 99 : 0,
+        hintCommonPrefixLength(token, candidate.pl || ''),
+      ),
+    }))
+    .filter((entry) => entry.score >= 3 || entry.score === 99)
+    .sort((left, right) => right.score - left.score)[0]?.candidate;
+  return String(match?.[interfaceLanguage] || match?.en || match?.nl || '').trim();
+};
+
+const getExampleWithTargetHidden = (item = {}, answer = '') => {
+  const example = String(item.example || '').trim();
+  if (!example) return '';
+  const redacted = redactAnswerSequence(example, answer, '[…]');
+  if (redacted !== example) return redacted;
+  const answerWords = wordEntries(answer);
+  const target = answerWords[0]?.token || item.pl || '';
+  if (!target) return example;
+  const targetNorm = normalizeText(target, { loose: true });
+  const tokens = displayTokens(example);
+  const replaced = tokens.map((token) => {
+    if (!isWordToken(token)) return token;
+    const prefix = hintCommonPrefixLength(token, targetNorm);
+    return prefix >= 3 ? '[…]' : token;
+  });
+  return joinDisplayTokens(replaced);
+};
+
+const conceptRuleLine = (concept = null) => concept?.visual?.filter(Boolean).join(' · ') || '';
+
+
+const localizedItemType = (type = 'word', language = 'en') => {
+  const key = String(type || 'word').toLowerCase();
+  const labels = {
+    en: {
+      word: 'word', verb: 'verb', noun: 'noun', adjective: 'adjective', adverb: 'adverb',
+      expression: 'fixed expression', preposition: 'preposition', pronoun: 'pronoun',
+      question: 'question word', connector: 'linking word', number: 'number', phrase: 'phrase',
+    },
+    nl: {
+      word: 'woord', verb: 'werkwoord', noun: 'zelfstandig naamwoord', adjective: 'bijvoeglijk naamwoord',
+      adverb: 'bijwoord', expression: 'vaste uitdrukking', preposition: 'voorzetsel', pronoun: 'voornaamwoord',
+      question: 'vraagwoord', connector: 'verbindingswoord', number: 'getal', phrase: 'zin',
+    },
+  };
+  return labels[language === 'nl' ? 'nl' : 'en'][key] || (language === 'nl' ? 'woord' : 'word');
+};
+
+const buildAnchorFrame = (answer = '', language = 'pl', anchorIndex = -1) => {
+  const entries = wordEntries(answer);
+  const content = entries.filter((entry) => !functionWordsFor(language).has(entry.normalized));
+  const canRevealAnchorFully = content.filter((entry) => entry.index !== 0 && entry.index !== anchorIndex).length > 0;
+  const tokens = displayTokens(answer);
+  const functionWords = functionWordsFor(language);
+  let wordIndex = -1;
+  return joinDisplayTokens(tokens.map((token) => {
+    if (!isWordToken(token)) return token;
+    wordIndex += 1;
+    if (wordIndex === 0 || functionWords.has(normalizedToken(token))) return token;
+    if (wordIndex === anchorIndex) {
+      if (canRevealAnchorFully) return token;
+      const characters = [...token];
+      const prefixLength = Math.max(1, Math.min(2, Math.max(1, characters.length - 1)));
+      return `${characters.slice(0, prefixLength).join('')}${'_'.repeat(Math.max(2, characters.length - prefixLength))}`;
+    }
+    return maskToken(token, { keepFirst: true });
+  }));
 };
 
 const targetLanguageForExercise = (exercise = {}, fallback = 'pl') => {
@@ -838,153 +978,200 @@ export const generateExerciseHint = (exercise, progress = null, level = 1, {
   const item = exercise?.source || ITEM_MAP.get(exercise?.itemId) || {};
   const answer = String(exercise?.answer || item.pl || '').trim();
   const targetLanguage = targetLanguageForExercise(exercise, interfaceLanguage);
+  const supportLanguage = interfaceLanguage === 'nl' ? 'nl' : 'en';
   const words = wordEntries(answer);
+  const wordCount = words.length || 1;
+  const chunkCount = sentenceChunkCount(answer);
   const firstWord = words[0]?.token || answer.slice(0, 1);
   const firstLetter = [...firstWord][0] || '';
-  const reveal = getRevealWord(answer, targetLanguage, partialIndex + (progress?.hintsUsed || 0));
-  const revealIndexes = reveal ? [reveal.index] : [];
+  const meaning = getExerciseMeaning(exercise, item, supportLanguage, targetLanguage);
+  const meaningRoute = formatMeaningRoute(meaning, chunkCount);
+  let reveal = getRevealWord(answer, targetLanguage, partialIndex + (progress?.hintsUsed || 0));
+  if (words.length > 1 && reveal?.index === 0) {
+    const alternative = words.find((entry) => entry.index > 0 && !functionWordsFor(targetLanguage).has(entry.normalized));
+    if (alternative) reveal = alternative;
+  }
   const concept = (exercise?.grammar || item.grammar || []).map((id) => CONCEPT_MAP.get(id)).find(Boolean);
   const scene = topicScene(item, answer);
-  const historyLead = progress?.lapses >= 2
-    ? `This memory has slipped ${progress.lapses} times, so use the sentence frame rather than forcing the whole answer at once.`
+  const targetIsPolish = targetLanguage === 'pl';
+  const answerUnitEn = wordCount === 1 ? 'word' : 'sentence';
+  const answerUnitNl = wordCount === 1 ? 'woord' : 'zin';
+  const memoryContextEn = progress?.lapses >= 2
+    ? `This item has slipped ${progress.lapses} times, so rebuild it in small steps.`
     : progress?.confidence >= 0.55
-      ? 'You have retrieved this before. Let the opening chunk come back before you search for every ending.'
-      : `Place the answer inside ${scene.en}.`;
-  const historyLeadNl = progress?.lapses >= 2
-    ? `Dit geheugen is al ${progress.lapses} keer weggezakt. Gebruik daarom eerst het zinsframe in plaats van het hele antwoord te forceren.`
+      ? 'You have produced this before; retrieve the opening first instead of searching for every ending at once.'
+      : 'Connect it to a real conversation.';
+  const memoryContextNl = progress?.lapses >= 2
+    ? `Dit onderdeel is al ${progress.lapses} keer weggezakt. Bouw het daarom in kleine stappen opnieuw op.`
     : progress?.confidence >= 0.55
-      ? 'Je hebt dit eerder teruggehaald. Laat eerst het begin van de zin terugkomen voordat je iedere uitgang zoekt.'
-      : `Plaats het antwoord in ${scene.nl}.`;
+      ? 'Je hebt dit eerder geproduceerd. Haal eerst het begin terug in plaats van meteen iedere uitgang te zoeken.'
+      : 'Koppel het aan een echt gesprek.';
 
   if (safeLevel === 1) {
-    const singleCharacterAnswer = words.length === 1 && [...(words[0]?.token || '')].length <= 1;
-    const itemKind = item.type || item.itemType || 'connector';
-    const listeningLine = exercise?.type === 'listening'
-      ? `Replay it once more and listen for ${words.length === 1 ? 'one key sound' : `the first and last of ${words.length} words`}.`
-      : singleCharacterAnswer
-        ? `It is one very short ${itemKind}; use its job in the sentence. The letter stays hidden.`
-        : `${words.length || 1} word${words.length === 1 ? '' : 's'}; the answer begins with “${firstLetter}”.`;
-    const listeningLineNl = exercise?.type === 'listening'
-      ? `Speel het nog één keer af en luister naar ${words.length === 1 ? 'één kernklank' : `het eerste en laatste van ${words.length} woorden`}.`
-      : singleCharacterAnswer
-        ? `Het is één heel kort woord van het type ${itemKind}; gebruik de functie in de zin. De letter blijft verborgen.`
-        : `${words.length || 1} woord${words.length === 1 ? '' : 'en'}; het antwoord begint met “${firstLetter}”.`;
+    if (exercise?.type === 'listening') {
+      return protectHintAnswer({
+        level: safeLevel,
+        ...localizedHintTitle('Listen for one decision', 'Luister naar één beslissend stukje'),
+        en: `${memoryContextEn} Replay the audio and listen only for the opening sound “${firstLetter}…” and the rhythm of ${wordCount} ${wordCount === 1 ? 'word' : 'words'}.`,
+        nl: `${memoryContextNl} Speel de audio opnieuw af en luister alleen naar de beginklank “${firstLetter}…” en het ritme van ${wordCount} ${wordCount === 1 ? 'woord' : 'woorden'}.`,
+        actionEn: 'Do not translate every sound. Decide what the speaker is trying to do or say.',
+        actionNl: 'Vertaal niet iedere klank. Bepaal wat de spreker probeert te doen of te zeggen.',
+        answerShown: false,
+      }, answer);
+    }
+
+    const meaningCopyEn = targetIsPolish && meaning ? `You want to say “${meaning}” ` : '';
+    const meaningCopyNl = targetIsPolish && meaning ? `Je wilt zeggen: “${meaning}” ` : '';
+    const shapeEn = wordCount === 1
+      ? `The answer is one Polish word and starts with “${firstLetter}…”.`
+      : `The sentence has ${wordCount} Polish words and starts with “${firstLetter}…”.`;
+    const shapeNl = wordCount === 1
+      ? `Het antwoord is één Pools woord en begint met “${firstLetter}…”.`
+      : `De zin bestaat uit ${wordCount} Poolse woorden en begint met “${firstLetter}…”.`;
     return protectHintAnswer({
       level: safeLevel,
-      title: 'Gentle nudge',
-      en: `${historyLead} ${listeningLine}`,
-      nl: `${historyLeadNl} ${listeningLineNl}`,
+      ...localizedHintTitle('Find the first move', 'Vind de eerste stap'),
+      en: `${meaningCopyEn}${memoryContextEn} ${shapeEn}`,
+      nl: `${meaningCopyNl}${memoryContextNl} ${shapeNl}`,
+      actionEn: targetIsPolish
+        ? 'Say the meaning once, then try only the first Polish word. Let the rest follow.'
+        : 'Read the Polish once as a whole and choose the meaning that matches the situation.',
+      actionNl: targetIsPolish
+        ? 'Zeg de betekenis één keer en probeer daarna alleen het eerste Poolse woord. Laat de rest daarop volgen.'
+        : 'Lees het Pools één keer als geheel en kies de betekenis die bij de situatie past.',
       answerShown: false,
     }, answer);
   }
 
   if (safeLevel === 2) {
-    const firstStructure = maskAnswerStructure(answer, targetLanguage);
-    const structure = normalizeText(firstStructure, { loose: true }) === normalizeText(answer, { loose: true })
-      ? maskEveryAnswerWord(answer)
-      : firstStructure;
+    if (wordCount === 1) {
+      const token = words[0]?.token || answer;
+      const characters = [...token];
+      const prefixLength = Math.max(1, Math.min(2, Math.max(1, characters.length - 1)));
+      const prefix = characters.slice(0, prefixLength).join('');
+      const structure = `${prefix}${'_'.repeat(Math.max(2, characters.length - prefixLength))}`;
+      const typeEn = localizedItemType(item.type || item.itemType || 'word', 'en');
+      const typeNl = localizedItemType(item.type || item.itemType || 'word', 'nl');
+      const meaningPartEn = targetIsPolish && meaning ? `It means “${meaning}”. ` : '';
+      const meaningPartNl = targetIsPolish && meaning ? `Het betekent “${meaning}”. ` : '';
+      return protectHintAnswer({
+        level: safeLevel,
+        ...localizedHintTitle('Complete the word', 'Maak het woord af'),
+        en: `${meaningPartEn}It is used as a ${typeEn}. Complete the sound and spelling after “${prefix}…”.`,
+        nl: `${meaningPartNl}Het wordt gebruikt als ${typeNl}. Maak de klank en spelling na “${prefix}…” af.`,
+        structure,
+        actionEn: 'Say the whole word before typing it. That prevents letter-by-letter guessing.',
+        actionNl: 'Zeg eerst het hele woord voordat je het typt. Zo voorkom je gokken per letter.',
+        answerShown: false,
+      }, answer);
+    }
+
+    const structure = buildStarterFrame(answer, targetLanguage);
     return protectHintAnswer({
       level: safeLevel,
-      title: 'Sentence structure',
-      en: `Use this frame: ${structure}`,
-      nl: `Gebruik dit patroon: ${structure}`,
+      ...localizedHintTitle('Build from a real starting point', 'Bouw vanaf een echt startpunt'),
+      en: `Begin with “${firstWord}”. Then follow the meaning in ${chunkCount} speaking block${chunkCount === 1 ? '' : 's'}${meaningRoute ? `: ${meaningRoute}` : ''}.`,
+      nl: `Begin met “${firstWord}”. Volg daarna de betekenis in ${chunkCount} spreekblok${chunkCount === 1 ? '' : 'ken'}${meaningRoute ? `: ${meaningRoute}` : ''}.`,
       structure,
+      actionEn: 'Read the starter once, cover it, and produce the complete line from the beginning.',
+      actionNl: 'Lees het startpunt één keer, dek het af en maak daarna de volledige zin vanaf het begin.',
       answerShown: false,
     }, answer);
   }
 
   if (safeLevel === 3) {
-    if (words.length === 1) {
-      const token = words[0]?.token || '';
+    if (wordCount === 1) {
+      const token = words[0]?.token || answer;
       const characters = [...token];
-      const itemKind = item.type || item.itemType || 'word';
       if (characters.length <= 1) {
         return protectHintAnswer({
           level: safeLevel,
-          title: 'One key feature',
-          en: `It is a one-letter ${itemKind}. Use its role in the sentence; the letter itself stays hidden until the final support step.`,
-          nl: `Het is een ${itemKind} van één letter. Gebruik de functie in de zin; de letter zelf blijft verborgen tot de laatste hulpstap.`,
+          ...localizedHintTitle('Use its exact job', 'Gebruik de precieze functie'),
+          en: `This is a one-letter ${item.type || 'word'}. Its position and grammatical job matter more than its shape.`,
+          nl: `Dit is een ${item.type || 'woord'} van één letter. De positie en grammaticale functie zijn belangrijker dan de vorm.`,
           structure: '__',
-          revealedWord: '',
+          actionEn: 'Say the whole surrounding sentence and let the missing function word fall into place.',
+          actionNl: 'Zeg de hele omliggende zin en laat het ontbrekende functiewoord op zijn plaats vallen.',
           answerShown: false,
         }, answer);
       }
-      const prefixLength = characters.length <= 3 ? 1 : Math.min(2, Math.ceil(characters.length / 3));
+      const prefixLength = characters.length <= 3 ? 1 : Math.min(3, Math.ceil(characters.length / 2));
       const prefix = characters.slice(0, prefixLength).join('');
       const structure = `${prefix}${'_'.repeat(Math.max(2, characters.length - prefixLength))}`;
+      const example = getExampleWithTargetHidden(item, answer);
       return protectHintAnswer({
         level: safeLevel,
-        title: 'One key element',
-        en: `The word opens with “${prefix}”. Complete the shape: ${structure}`,
-        nl: `Het woord begint met “${prefix}”. Maak de vorm af: ${structure}`,
+        ...localizedHintTitle('Use sound and context', 'Gebruik klank en context'),
+        en: `The word begins with “${prefix}”.${example ? ` It belongs in this situation: ${example}` : ''}`,
+        nl: `Het woord begint met “${prefix}”.${example ? ` Het hoort in deze situatie: ${example}` : ''}`,
         structure,
-        revealedWord: prefix,
+        actionEn: 'Complete the word aloud first, then type it once without looking back.',
+        actionNl: 'Maak het woord eerst hardop af en typ het daarna één keer zonder terug te kijken.',
         answerShown: false,
       }, answer);
     }
 
+    const structure = buildAnchorFrame(answer, targetLanguage, reveal?.index ?? -1);
+    const gloss = reveal ? findTokenGloss(item, reveal.token, supportLanguage) : '';
     const contentWords = words.filter((entry) => !functionWordsFor(targetLanguage).has(entry.normalized));
-    if (reveal && contentWords.length <= 1) {
-      const characters = [...reveal.token];
-      if (characters.length <= 1) {
-        const structure = maskAnswerStructure(answer, targetLanguage);
-        return protectHintAnswer({
-          level: safeLevel,
-          title: 'One key feature',
-          en: `The key word is only one letter, so it stays hidden. Use its position in this frame: ${structure}`,
-          nl: `Het kernwoord is maar één letter en blijft daarom verborgen. Gebruik de positie in dit patroon: ${structure}`,
-          structure,
-          revealedWord: '',
-          answerShown: false,
-        }, answer);
-      }
-      const prefixLength = characters.length <= 3 ? 1 : Math.min(2, Math.ceil(characters.length / 3));
-      const prefix = characters.slice(0, prefixLength).join('');
-      const structure = maskAnswerWithPartialWord(answer, targetLanguage, reveal.index, prefixLength);
-      return protectHintAnswer({
-        level: safeLevel,
-        title: 'One key element',
-        en: `The key word opens with “${prefix}”. Complete the frame: ${structure}`,
-        nl: `Het kernwoord begint met “${prefix}”. Maak het patroon af: ${structure}`,
-        structure,
-        revealedWord: prefix,
-        answerShown: false,
-      }, answer);
-    }
-
-    const structure = maskAnswerStructure(answer, targetLanguage, revealIndexes);
+    const fullAnchor = contentWords.filter((entry) => entry.index !== 0 && entry.index !== reveal?.index).length > 0;
+    const anchorCharacters = [...(reveal?.token || '')];
+    const anchorPrefix = anchorCharacters.slice(0, Math.max(1, Math.min(2, Math.max(1, anchorCharacters.length - 1)))).join('');
     return protectHintAnswer({
       level: safeLevel,
-      title: 'One anchor word',
+      ...localizedHintTitle('Add one useful anchor', 'Voeg één bruikbaar anker toe'),
       en: reveal
-        ? `Anchor word ${reveal.index + 1} is “${reveal.token}”. Now rebuild around it: ${structure}`
-        : `Use this partial frame: ${structure}`,
+        ? `Keep “${firstWord}” as the start. The next key idea is ${gloss ? `“${gloss}”` : 'the highlighted content word'}${fullAnchor ? `: “${reveal.token}”` : `, beginning with “${anchorPrefix}…”`}.`
+        : `Keep “${firstWord}” as the start and rebuild the remaining words in order.`,
       nl: reveal
-        ? `Ankerwoord ${reveal.index + 1} is “${reveal.token}”. Bouw er nu omheen: ${structure}`
-        : `Gebruik dit gedeeltelijke patroon: ${structure}`,
+        ? `Houd “${firstWord}” als begin. Het volgende kernidee is ${gloss ? `“${gloss}”` : 'het gemarkeerde inhoudswoord'}${fullAnchor ? `: “${reveal.token}”` : `, beginnend met “${anchorPrefix}…”`}.`
+        : `Houd “${firstWord}” als begin en bouw de overige woorden in de juiste volgorde op.`,
       structure,
       revealedWord: reveal?.token || '',
+      actionEn: 'Look away from the starting point and say the whole line once. Return only to check the missing ending.',
+      actionNl: 'Kijk weg van het startpunt en zeg de hele zin één keer. Kijk alleen terug om de ontbrekende uitgang te controleren.',
       answerShown: false,
     }, answer);
   }
 
   if (safeLevel === 4) {
     const fallback = typeCoachCopy(item);
+    const ruleLine = conceptRuleLine(concept);
+    const lastContent = [...words].reverse().find((entry) => !functionWordsFor(targetLanguage).has(entry.normalized));
+    const structure = wordCount > 1
+      ? buildAnchorFrame(answer, targetLanguage, lastContent?.index ?? -1)
+      : maskAnswerWithPartialWord(answer, targetLanguage, 0, Math.max(1, Math.ceil([...answer].length / 2)));
     return protectHintAnswer({
       level: safeLevel,
-      title: concept ? `Grammar coach · ${concept.title}` : 'Teaching hint',
-      en: concept ? concept.en : fallback.en,
-      nl: concept ? concept.nl : fallback.nl,
-      chunks: sentenceChunkCount(answer),
+      ...localizedHintTitle(
+        concept ? `Apply one exact rule · ${concept.title}` : 'Use the sentence as a speaking block',
+        concept ? 'Pas één precieze regel toe' : 'Gebruik de zin als één spreekblok',
+      ),
+      en: concept
+        ? `${ruleLine ? `Rule for this answer: ${ruleLine}. ` : ''}${concept.en} Focus only on the word or ending affected by this rule.`
+        : `${fallback.en} The useful meaning is “${meaning || scene.en}”`,
+      nl: concept
+        ? `${ruleLine ? `Regel voor dit antwoord: ${ruleLine}. ` : ''}${concept.nl} Let alleen op het woord of de uitgang waarop deze regel invloed heeft.`
+        : `${fallback.nl} De bruikbare betekenis is “${meaning || scene.nl}”`,
+      structure,
+      chunks: chunkCount,
+      actionEn: concept
+        ? `Produce the complete ${wordCount}-word answer now. Check the rule once, then stop analysing.`
+        : `Produce the complete ${wordCount}-word answer now. Focus on the useful speaking block, not a word-for-word translation.`,
+      actionNl: concept
+        ? `Maak nu het volledige antwoord van ${wordCount} ${wordCount === 1 ? 'woord' : 'woorden'}. Controleer de regel één keer en stop daarna met analyseren.`
+        : `Maak nu het volledige antwoord van ${wordCount} ${wordCount === 1 ? 'woord' : 'woorden'}. Richt je op het bruikbare spreekblok, niet op een woord-voor-woordvertaling.`,
       answerShown: false,
     }, answer);
   }
 
   return {
     level: safeLevel,
-    title: 'Answer, then active recall',
-    en: `Study the answer briefly, hide it, and retrieve it once: ${answer}`,
-    nl: `Bekijk het antwoord kort, verberg het en haal het daarna één keer zelf terug: ${answer}`,
+    ...localizedHintTitle('Study once, then retrieve', 'Bekijk één keer en haal het daarna terug'),
+    en: 'Study the complete answer briefly. It will be hidden before this attempt counts.',
+    nl: 'Bekijk het volledige antwoord kort. Het wordt verborgen voordat deze poging meetelt.',
+    actionEn: 'Read it aloud once, hide it, and retrieve it without copying.',
+    actionNl: 'Lees het één keer hardop, verberg het en haal het daarna terug zonder over te schrijven.',
     answer,
     translations: exercise?.translations || { nl: item.nl || '', en: item.en || '' },
     answerShown: true,
@@ -1000,77 +1187,70 @@ export const generateConversationHint = (turn, level = 1, {
   const suggestion = suggestions[Math.abs(Number(history?.turns || 0)) % Math.max(1, suggestions.length)] || suggestions[0] || { pl: '' };
   const answer = suggestion.pl || '';
   const words = wordEntries(answer);
-  const reveal = getRevealWord(answer, 'pl', partialIndex + (history?.hintsUsed || 0));
-  const revealIndexes = reveal ? [reveal.index] : [];
+  const firstWord = words[0]?.token || '';
   const safeLevel = clamp(Math.round(Number(level) || 1), 1, 5);
+  let reveal = getRevealWord(answer, 'pl', partialIndex + (history?.hintsUsed || 0));
+  if (words.length > 1 && reveal?.index === 0) {
+    reveal = words.find((entry) => entry.index > 0 && !functionWordsFor('pl').has(entry.normalized)) || reveal;
+  }
 
   if (safeLevel === 1) {
     return protectHintAnswer({
       level: safeLevel,
-      title: 'Choose the intention',
-      en: `${words.length || 1} Polish word${words.length === 1 ? '' : 's'}. Start with “${words[0]?.token?.[0] || ''}” and answer the question rather than translating it word for word.`,
-      nl: `${words.length || 1} Pools${words.length === 1 ? ' woord' : 'e woorden'}. Begin met “${words[0]?.token?.[0] || ''}” en beantwoord de vraag in plaats van die woord voor woord te vertalen.`,
+      ...localizedHintTitle('Answer one intention', 'Beantwoord één bedoeling'),
+      en: `Do not translate the other person word for word. Choose one intention and begin your ${words.length || 1}-word reply with “${firstWord?.[0] || ''}…”.`,
+      nl: `Vertaal de ander niet woord voor woord. Kies één bedoeling en begin je antwoord van ${words.length || 1} ${words.length === 1 ? 'woord' : 'woorden'} met “${firstWord?.[0] || ''}…”.`,
+      actionEn: 'Give one clear reaction, then add a question only if it comes naturally.',
+      actionNl: 'Geef één duidelijke reactie en voeg alleen een vraag toe als die vanzelf komt.',
       answerShown: false,
     }, answer);
   }
   if (safeLevel === 2) {
-    const firstStructure = maskAnswerStructure(answer, 'pl');
-    const structure = normalizeText(firstStructure, { loose: true }) === normalizeText(answer, { loose: true })
-      ? maskEveryAnswerWord(answer)
-      : firstStructure;
-    return protectHintAnswer({ level: safeLevel, title: 'Reply frame', en: `Reply frame: ${structure}`, nl: `Antwoordpatroon: ${structure}`, structure, answerShown: false }, answer);
-  }
-  if (safeLevel === 3) {
-    const contentWords = words.filter((entry) => !functionWordsFor('pl').has(entry.normalized));
-    if (reveal && contentWords.length <= 1) {
-      const characters = [...reveal.token];
-      if (characters.length <= 1) {
-        const structure = maskAnswerStructure(answer, 'pl');
-        return protectHintAnswer({
-          level: safeLevel,
-          title: 'One key feature',
-          en: `The key word stays hidden because it is only one letter. Use its position: ${structure}`,
-          nl: `Het kernwoord blijft verborgen omdat het maar één letter is. Gebruik de positie: ${structure}`,
-          structure,
-          answerShown: false,
-        }, answer);
-      }
-      const prefixLength = characters.length <= 3 ? 1 : Math.min(2, Math.ceil(characters.length / 3));
-      const prefix = characters.slice(0, prefixLength).join('');
-      const structure = maskAnswerWithPartialWord(answer, 'pl', reveal.index, prefixLength);
-      return protectHintAnswer({
-        level: safeLevel,
-        title: 'One key element',
-        en: `The key word opens with “${prefix}”. Complete the reply: ${structure}`,
-        nl: `Het kernwoord begint met “${prefix}”. Maak het antwoord af: ${structure}`,
-        structure,
-        answerShown: false,
-      }, answer);
-    }
-    const structure = maskAnswerStructure(answer, 'pl', revealIndexes);
+    const structure = buildStarterFrame(answer, 'pl');
     return protectHintAnswer({
       level: safeLevel,
-      title: 'One anchor word',
-      en: `Use “${reveal?.token || words[0]?.token || ''}” as the anchor: ${structure}`,
-      nl: `Gebruik “${reveal?.token || words[0]?.token || ''}” als anker: ${structure}`,
+      ...localizedHintTitle('Start the reply', 'Begin het antwoord'),
+      en: `Begin with “${firstWord}”. The remaining initials show the route; they are not a sentence to copy mechanically.`,
+      nl: `Begin met “${firstWord}”. De overige beginletters tonen de route; het is geen zin die je gedachteloos moet kopiëren.`,
       structure,
+      actionEn: 'Look away and finish the reply in your own voice.',
+      actionNl: 'Kijk weg en maak het antwoord in je eigen woorden af.',
+      answerShown: false,
+    }, answer);
+  }
+  if (safeLevel === 3) {
+    const structure = buildAnchorFrame(answer, 'pl', reveal?.index ?? -1);
+    return protectHintAnswer({
+      level: safeLevel,
+      ...localizedHintTitle('Use one anchor word', 'Gebruik één ankerwoord'),
+      en: `Keep “${firstWord}” as the start${reveal ? ` and use the next visible letters as the key content cue` : ''}.`,
+      nl: `Houd “${firstWord}” als begin${reveal ? ` en gebruik de volgende zichtbare letters als inhoudelijke aanwijzing` : ''}.`,
+      structure,
+      actionEn: 'Say the reply once without looking, even if the ending is not perfect.',
+      actionNl: 'Zeg het antwoord één keer zonder te kijken, ook als de uitgang nog niet perfect is.',
       answerShown: false,
     }, answer);
   }
   if (safeLevel === 4) {
+    const structure = buildAnchorFrame(answer, 'pl', Math.max(0, words.length - 1));
     return protectHintAnswer({
       level: safeLevel,
-      title: 'Conversation coach',
-      en: turn?.coach || 'Use a short natural chunk. One clear intention is enough to keep the conversation moving.',
-      nl: 'Gebruik een kort natuurlijk zinsblok. Eén duidelijke bedoeling is genoeg om het gesprek gaande te houden.',
+      ...localizedHintTitle('Conversation move', 'Gesprekszet'),
+      en: `${turn?.coach || 'Use one short natural speaking block.'} Apply that point only; you do not need a perfect or long reply.`,
+      nl: 'Gebruik één kort, natuurlijk spreekblok. Pas alleen dit punt toe; het antwoord hoeft niet perfect of lang te zijn.',
+      structure,
+      actionEn: 'Respond now, then keep the conversation moving instead of editing the sentence repeatedly.',
+      actionNl: 'Antwoord nu en houd het gesprek gaande in plaats van de zin steeds opnieuw te verbeteren.',
       answerShown: false,
     }, answer);
   }
   return {
     level: safeLevel,
-    title: 'Model reply, then respond yourself',
-    en: `A natural model reply is: ${answer}`,
-    nl: `Een natuurlijk voorbeeldantwoord is: ${answer}`,
+    ...localizedHintTitle('Model once, then answer yourself', 'Eén voorbeeld, daarna zelf antwoorden'),
+    en: 'Study one natural reply briefly. It will be hidden before you respond.',
+    nl: 'Bekijk kort één natuurlijk antwoord. Het wordt verborgen voordat je zelf reageert.',
+    actionEn: 'Keep the intention, but say it in your own voice after the model disappears.',
+    actionNl: 'Behoud de bedoeling, maar zeg het in je eigen woorden nadat het voorbeeld verdwijnt.',
     answer,
     alternatives: suggestions.map((entry) => entry.pl).filter(Boolean),
     answerShown: true,
@@ -1092,9 +1272,13 @@ export const generateTutorExerciseHint = (exercise, level = 1, { partialIndex = 
   if (level === 4 && exercise?.prompt) {
     return {
       ...hint,
-      title: 'Grammar coach',
-      en: `Read the frame carefully: ${exercise.prompt} Compare the form after the verb or preposition before choosing an ending.`,
-      nl: `Lees het patroon zorgvuldig: ${exercise.prompt} Vergelijk de vorm na het werkwoord of voorzetsel voordat je een uitgang kiest.`,
+      title: 'Apply the rule to this gap',
+      titleEn: 'Apply the rule to this gap',
+      titleNl: 'Pas de regel toe op deze plek',
+      en: `Focus on the exact gap in this prompt: ${exercise.prompt} Check only the word after the relevant verb or preposition.`,
+      nl: `Richt je op de precieze lege plek in deze opdracht: ${exercise.prompt} Controleer alleen het woord na het relevante werkwoord of voorzetsel.`,
+      actionEn: 'Say the complete option aloud before selecting it.',
+      actionNl: 'Zeg de volledige optie hardop voordat je die kiest.',
     };
   }
   return hint;
@@ -1292,15 +1476,23 @@ export const updateStreak = (state, eventDate = new Date()) => {
   state.stats.lastStudyDate = today;
 };
 
-export const addActivity = (state, { minutes = 0, reviews = 0, speaking = 0, conversations = 0, games = 0 } = {}) => {
+export const addActivity = (state, { minutes = 0, reviews = 0, speaking = 0, conversations = 0, games = 0, source = 'estimated' } = {}) => {
   const today = getTodayKey();
   if (state.stats.minutesDate !== today) {
     state.stats.minutesDate = today;
     state.stats.minutesToday = 0;
   }
 
-  state.stats.minutesToday += minutes;
-  state.stats.totalMinutes += minutes;
+  // From schema 9 onward, elapsed learning time is measured continuously in
+  // the foreground. Older per-exercise duration estimates still update the
+  // learning counters, but are ignored for minutes to prevent double counting.
+  const actualTimeMode = state.stats.timeTracking?.mode === 'actual';
+  const countedMinutes = actualTimeMode && source !== 'actual'
+    ? 0
+    : Math.max(0, Number(minutes || 0));
+
+  state.stats.minutesToday += countedMinutes;
+  state.stats.totalMinutes += countedMinutes;
   state.stats.reviews += reviews;
   state.stats.speakingAttempts += speaking;
   state.stats.conversationTurns += conversations;
@@ -1311,7 +1503,7 @@ export const addActivity = (state, { minutes = 0, reviews = 0, speaking = 0, con
     day = { date: today, minutes: 0, reviews: 0, speaking: 0, conversations: 0, games: 0 };
     state.stats.activity.push(day);
   }
-  day.minutes += minutes;
+  day.minutes += countedMinutes;
   day.reviews += reviews;
   day.speaking += speaking;
   day.conversations += conversations;
@@ -1320,7 +1512,11 @@ export const addActivity = (state, { minutes = 0, reviews = 0, speaking = 0, con
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-45);
 
-  if (minutes > 0 || reviews > 0 || speaking > 0 || conversations > 0 || games > 0) updateStreak(state);
+  if (source === 'actual' && countedMinutes > 0) {
+    state.stats.timeTracking.lastRecordedAt = new Date().toISOString();
+  }
+
+  if (countedMinutes > 0 || reviews > 0 || speaking > 0 || conversations > 0 || games > 0) updateStreak(state);
 };
 
 const ensureHintStats = (state) => {

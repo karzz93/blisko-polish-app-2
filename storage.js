@@ -5,7 +5,7 @@ const STATE_KEY = 'app-state-v1';
 const SAFETY_BACKUPS_KEY = 'safety-backups-v1';
 const FALLBACK_KEY = 'blisko-app-state-v1';
 const FALLBACK_BACKUPS_KEY = 'blisko-safety-backups-v1';
-const CURRENT_SCHEMA_VERSION = 8;
+const CURRENT_SCHEMA_VERSION = 9;
 const MAX_SAFETY_BACKUPS = 5;
 
 const SKILL_KEYS = ['reading', 'listening', 'guidedProduction', 'freeProduction', 'pronunciation'];
@@ -136,6 +136,11 @@ export const createDefaultState = () => ({
       conversation: createSkillEntry(),
     },
     activity: [],
+    timeTracking: {
+      mode: 'actual',
+      startedAtVersion: '1.9.3',
+      lastRecordedAt: null,
+    },
   },
   tutor: {
     messages: [],
@@ -339,6 +344,13 @@ const migrateState = (state) => {
   state.stats.activity = Array.isArray(state.stats.activity) ? state.stats.activity : [];
   state.stats.wordsSeen = Array.isArray(state.stats.wordsSeen) ? state.stats.wordsSeen : [];
   state.stats.phrasesSeen = Array.isArray(state.stats.phrasesSeen) ? state.stats.phrasesSeen : [];
+  state.stats.timeTracking = {
+    mode: 'actual',
+    startedAtVersion: previousSchema < 9 ? '1.9.3' : (state.stats.timeTracking?.startedAtVersion || '1.9.3'),
+    lastRecordedAt: state.stats.timeTracking?.lastRecordedAt || null,
+    ...(state.stats.timeTracking || {}),
+  };
+  state.stats.timeTracking.mode = 'actual';
   state.stats.listeningLab = {
     sessions: 0, attempts: 0, correct: 0, dictations: 0, dictationCorrect: 0,
     naturalSpeedAttempts: 0, naturalSpeedCorrect: 0, fastSpeedAttempts: 0, fastSpeedCorrect: 0,

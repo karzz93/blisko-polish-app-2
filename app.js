@@ -12,7 +12,7 @@ import {
   CONVERSATIONS,
   RESCUE_PHRASES,
   GAME_TYPES,
-} from './data.js?v=1.9.1';
+} from './data.js?v=1.9.3';
 import {
   loadState,
   saveState,
@@ -27,7 +27,8 @@ import {
   ensureAutomaticBackup,
   markStartupHealthy,
   getStorageHealth,
-} from './storage.js?v=1.9.1';
+  getTodayKey,
+} from './storage.js?v=1.9.3';
 import {
   ITEM_MAP,
   WORD_MAP,
@@ -66,8 +67,8 @@ import {
   applyPlacementResult,
   normalizeText,
   shuffle,
-} from './engine.js?v=1.9.1';
-import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.9.1';
+} from './engine.js?v=1.9.3';
+import { localTutorReply, cloudTutorReply } from './tutor.js?v=1.9.3';
 import {
   SOUND_LESSONS,
   analyzePolishWord,
@@ -76,13 +77,13 @@ import {
   getSoundLessonForWord,
   splitPolishTokens,
   isPolishWordToken,
-} from './polish.js?v=1.9.1';
+} from './polish.js?v=1.9.3';
 import {
   localizeTree,
   startLocalizationObserver,
   registerPolishTexts,
   translateUiText,
-} from './i18n.js?v=1.9.1';
+} from './i18n.js?v=1.9.3';
 
 const ICON_PATHS = {
   home: '<path d="M3 10.8 12 3l9 7.8v8.7a1.5 1.5 0 0 1-1.5 1.5h-5v-6h-5v6h-5A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-6h6v6"/>',
@@ -198,6 +199,15 @@ let activeListeningLab = null;
 let activeSoundLab = null;
 let morphologyContext = null;
 let availablePolishVoices = [];
+
+const ACTIVE_TIME_TICK_MS = 1000;
+const ACTIVE_TIME_COMMIT_MS = 5000;
+const ACTIVE_TIME_IDLE_MS = 90_000;
+const ACTIVE_TIME_MAX_TICK_MS = 2500;
+let activeTimeTimer = null;
+let activeTimeLastTickAt = Date.now();
+let activeTimeLastInteractionAt = Date.now();
+let activeTimePendingMs = 0;
 
 const mainContent = document.getElementById('main-content');
 const modalRoot = document.getElementById('modal-root');
@@ -406,6 +416,129 @@ const setTheme = (theme) => {
 
 const save = (options) => saveState(state, options);
 
+const ensureCurrentTimeDay = () => {
+  if (!state?.stats) return;
+  const today = getTodayKey();
+  if (state.stats.minutesDate !== today) {
+    state.stats.minutesDate = today;
+    state.stats.minutesToday = 0;
+    activeTimePendingMs = 0;
+  }
+};
+
+const isForegroundLearningContext = () => {
+  if (session || placementSession || activeGame || activeListeningLab || activeSoundLab || morphologyContext) return true;
+  return ['learn', 'review', 'talk', 'tutor', 'games', 'library'].includes(currentView);
+};
+
+const isMediaActivelyLearning = () => Boolean(
+  mediaRecorder?.state === 'recording'
+  || window.speechSynthesis?.speaking,
+);
+
+const hasRecentStudyInteraction = (now = Date.now()) => (
+  now - activeTimeLastInteractionAt <= ACTIVE_TIME_IDLE_MS
+  || isMediaActivelyLearning()
+);
+
+const getLiveMinutesToday = () => {
+  ensureCurrentTimeDay();
+  return Math.max(0, Number(state?.stats?.minutesToday || 0) + activeTimePendingMs / 60_000);
+};
+
+const formatTimerClock = (secondsValue) => {
+  const totalSeconds = Math.max(0, Math.round(Number(secondsValue || 0)));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+
+const updateTimeDisplays = () => {
+  if (!state?.profile || !state?.stats) return;
+  const goalMinutes = Math.max(5, Number(state.profile.dailyGoal || 15));
+  const elapsedSeconds = Math.max(0, Math.floor(getLiveMinutesToday() * 60));
+  const goalSeconds = Math.round(goalMinutes * 60);
+  const remainingSeconds = Math.max(0, goalSeconds - elapsedSeconds);
+  const reached = remainingSeconds <= 0;
+
+  const label = document.getElementById('sidebar-goal-label');
+  const bar = document.getElementById('sidebar-goal-bar');
+  const nudge = document.getElementById('sidebar-nudge');
+  if (label) label.textContent = `${formatTimerClock(elapsedSeconds)} / ${formatTimerClock(goalSeconds)}`;
+  if (bar) bar.style.width = `${Math.min(100, elapsedSeconds / Math.max(1, goalSeconds) * 100)}%`;
+  if (nudge) {
+    nudge.textContent = reached
+      ? explanationText('Daily goal reached. Everything else is a bonus.', 'Dagdoel behaald. Alles wat je nu nog doet is extra.')
+      : elapsedSeconds === 0
+        ? explanationText('The clock runs only while you are actively learning.', 'De klok loopt alleen terwijl je actief aan het leren bent.')
+        : explanationLanguage() === 'nl'
+          ? `Nog ${formatTimerClock(remainingSeconds)} gerichte oefentijd tot je dagdoel.`
+          : `${formatTimerClock(remainingSeconds)} of focused practice left to your daily goal.`;
+  }
+
+  document.querySelectorAll('[data-live-goal-remaining]').forEach((node) => {
+    node.textContent = reached
+      ? explanationText('goal reached', 'doel behaald')
+      : formatTimerClock(remainingSeconds);
+  });
+  document.querySelectorAll('[data-live-goal-button]').forEach((button) => {
+    button.setAttribute('aria-label', reached
+      ? explanationText('Start smart session. Daily goal reached.', 'Slimme sessie starten. Dagdoel behaald.')
+      : explanationLanguage() === 'nl'
+        ? `Slimme sessie starten. Nog ${formatTimerClock(remainingSeconds)} tot je dagdoel.`
+        : `Start smart session. ${formatTimerClock(remainingSeconds)} left to your daily goal.`);
+  });
+
+  if (session) {
+    const sessionSeconds = Math.max(0, Math.floor((getLiveMinutesToday() - Number(session.trackedMinutesAtStart || 0)) * 60));
+    document.querySelectorAll('[data-live-session-elapsed]').forEach((node) => {
+      node.textContent = formatTimerClock(sessionSeconds);
+    });
+  }
+};
+
+const commitActiveStudyTime = ({ force = false } = {}) => {
+  if (!state || activeTimePendingMs <= 0) return 0;
+  if (!force && activeTimePendingMs < ACTIVE_TIME_COMMIT_MS) return 0;
+  const committedMs = activeTimePendingMs;
+  activeTimePendingMs = 0;
+  addActivity(state, { minutes: committedMs / 60_000, source: 'actual' });
+  save({ immediate: force });
+  return committedMs;
+};
+
+const tickActiveStudyTime = ({ forceCommit = false } = {}) => {
+  const now = Date.now();
+  const elapsed = Math.max(0, Math.min(ACTIVE_TIME_MAX_TICK_MS, now - activeTimeLastTickAt));
+  activeTimeLastTickAt = now;
+  ensureCurrentTimeDay();
+
+  const shouldCount = document.visibilityState === 'visible'
+    && isForegroundLearningContext()
+    && hasRecentStudyInteraction(now);
+  if (shouldCount && elapsed > 0) activeTimePendingMs += elapsed;
+
+  commitActiveStudyTime({ force: forceCommit });
+  updateTimeDisplays();
+};
+
+const markStudyInteraction = () => {
+  activeTimeLastInteractionAt = Date.now();
+};
+
+const startActiveTimeTracking = () => {
+  if (activeTimeTimer) clearInterval(activeTimeTimer);
+  activeTimeLastTickAt = Date.now();
+  activeTimeLastInteractionAt = Date.now();
+  activeTimeTimer = window.setInterval(() => tickActiveStudyTime(), ACTIVE_TIME_TICK_MS);
+  updateTimeDisplays();
+};
+
+const pauseActiveTimeTracking = () => {
+  tickActiveStudyTime({ forceCommit: true });
+  activeTimeLastTickAt = Date.now();
+};
+
 const updateConnectionStatus = () => {
   const pill = document.getElementById('connection-pill');
   const label = document.getElementById('connection-label');
@@ -463,15 +596,7 @@ const updateShell = () => {
   }
   document.documentElement.dataset.explanationLanguage = explanationLanguage();
 
-  const goal = Math.max(5, state.profile.dailyGoal || 15);
-  const today = Math.round(state.stats.minutesToday || 0);
-  document.getElementById('sidebar-goal-label').textContent = `${today} / ${goal} min`;
-  document.getElementById('sidebar-goal-bar').style.width = `${Math.min(100, today / goal * 100)}%`;
-  document.getElementById('sidebar-nudge').textContent = today >= goal
-    ? 'Daily goal reached. Everything else is a bonus.'
-    : today === 0
-      ? 'One useful sentence is enough to keep momentum.'
-      : `${Math.max(1, goal - today)} focused minutes to your daily goal.`;
+  updateTimeDisplays();
 
   renderNavigation();
   updateConnectionStatus();
@@ -1131,7 +1256,7 @@ function renderDashboard() {
   const insights = getCoachInsights(state);
   const readiness = metrics.conversationReadiness;
   const goal = Math.max(5, state.profile.dailyGoal || 15);
-  const remaining = Math.max(0, goal - Math.round(state.stats.minutesToday || 0));
+  const remainingSeconds = Math.max(0, Math.round(goal * 60 - getLiveMinutesToday() * 60));
   const pattern = PATTERNS[0];
   const selections = patternSelections[pattern.id] || pattern.default;
   const sentence = getPatternSentence(pattern, selections);
@@ -1169,8 +1294,8 @@ function renderDashboard() {
             <h2><span lang="pl">Cześć</span>, ${escapeHtml(state.profile.name)}. ${escapeHtml(explanationText('Learn what you will', 'Leer wat je echt gaat'))} <em>${escapeHtml(explanationText('actually say.', 'zeggen.'))}</em></h2>
             <p>${escapeHtml(heroPriority)}</p>
             <div class="hero-actions">
-              <button class="primary-button lime" type="button" data-action="start-session" data-mode="smart">
-                ${icon('play')} ${escapeHtml(explanationText('Start smart session', 'Slimme sessie starten'))} · ${remaining || 5} min
+              <button class="primary-button lime" type="button" data-action="start-session" data-mode="smart" data-live-goal-button>
+                ${icon('play')} ${escapeHtml(explanationText('Start smart session', 'Slimme sessie starten'))} · <span data-live-goal-remaining>${remainingSeconds > 0 ? formatTimerClock(remainingSeconds) : escapeHtml(explanationText('goal reached', 'doel behaald'))}</span>
               </button>
               <button class="secondary-button" type="button" data-action="go-view" data-view="talk">
                 ${icon('message')} ${escapeHtml(explanationText('Talk to family', 'Met familie praten'))}
@@ -1776,6 +1901,19 @@ const ensureConversationHintState = (personaId = state.conversation.selectedPers
   return hintState;
 };
 
+const hintTitleText = (hint = {}) => explanationText(hint.titleEn || hint.title || '', hint.titleNl || hint.title || '');
+const hintActionText = (hint = {}) => explanationText(hint.actionEn || '', hint.actionNl || '');
+const renderHintGuidance = (hint = {}, { hiddenText = '', targetLanguage = 'pl' } = {}) => {
+  const primaryCopy = hiddenText || explanationText(hint.en, hint.nl);
+  const actionCopy = hiddenText ? '' : hintActionText(hint);
+  const structure = hiddenText ? '' : String(hint.structure || '').trim();
+  return `
+    <p class="hint-primary">${escapeHtml(primaryCopy || '')}</p>
+    ${structure ? `<div class="hint-working-frame"><span>${escapeHtml(explanationText('Starting point', 'Startpunt'))}</span><strong lang="${targetLanguage === 'pl' ? 'pl' : explanationCode().toLowerCase()}">${escapeHtml(structure)}</strong></div>` : ''}
+    ${actionCopy ? `<div class="hint-next-action"><span>${icon('arrow')}</span><p><strong>${escapeHtml(explanationText('Do this now', 'Doe dit nu'))}</strong>${escapeHtml(actionCopy)}</p></div>` : ''}
+  `;
+};
+
 const renderConversationHintPanel = (persona, transcript, turn) => {
   if (transcript.completed) return '';
   const hintState = ensureConversationHintState(persona.id);
@@ -1791,11 +1929,10 @@ const renderConversationHintPanel = (persona, transcript, turn) => {
         <div class="progressive-hint conversation-hint level-${hint.level}" aria-live="polite">
           <div class="hint-head">
             <span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span>
-            <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>
+            <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hintTitleText(hint))}</small></span>
             ${renderHintMeter(hint.level)}
           </div>
-          <p class="hint-primary">${escapeHtml(hidingModel ? 'The model reply is hidden. Answer the person in your own voice now.' : primaryCopy || '')}</p>
-          ${!hidingModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+          ${renderHintGuidance(hint, { hiddenText: hidingModel ? explanationText('The model reply is hidden. Answer the person in your own voice now.', 'Het voorbeeldantwoord is verborgen. Antwoord de ander nu in je eigen woorden.') : '', targetLanguage: 'pl' })}
           ${studyModel ? `
             <div class="conversation-model-recall">
               <strong>${escapeHtml(hint.answer || turn.suggestions?.[0]?.pl || '')}</strong>
@@ -1980,11 +2117,10 @@ const renderTutorExerciseHint = (exercise, key, exerciseState) => {
     <div class="progressive-hint tutor-progressive-hint level-${hint.level}">
       <div class="hint-head">
         <span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span>
-        <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>
+        <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hintTitleText(hint))}</small></span>
         ${renderHintMeter(hint.level)}
       </div>
-      <p class="hint-primary">${escapeHtml(hideModel ? 'The answer is hidden. Retrieve it once before checking.' : primaryCopy || '')}</p>
-      ${!hideModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+      ${renderHintGuidance(hint, { hiddenText: hideModel ? explanationText('The answer is hidden. Retrieve it once before checking.', 'Het antwoord is verborgen. Haal het één keer terug voordat je controleert.') : '', targetLanguage: 'pl' })}
     </div>
   `;
 };
@@ -2283,7 +2419,7 @@ function renderProgress() {
               <div class="section-heading"><div><h2>${escapeHtml(explanationText('Last 14 days', 'Laatste 14 dagen'))}</h2><p>${escapeHtml(explanationText('Focused minutes on this device.', 'Gerichte minuten op dit apparaat.'))}</p></div></div>
               <div class="activity-chart compact-activity-chart">
                 ${activity.map((day) => `
-                  <div class="chart-column" title="${day.date}: ${day.minutes} min">
+                  <div class="chart-column" title="${day.date}: ${formatTimerClock(Number(day.minutes || 0) * 60)}">
                     <div class="chart-bar-wrap"><div class="chart-bar" style="--height:${Math.max(3, day.minutes / maxMinutes * 100)}%"></div></div>
                     <span>${day.dayLabel}</span>
                   </div>
@@ -2463,7 +2599,7 @@ const openProgressDetail = (detail) => {
       const active = isActiveProgressDay(day);
       const goalMet = Number(day.minutes || 0) >= Math.max(5, Number(state.profile.dailyGoal || 15));
       const details = [
-        `${Number(day.minutes || 0)} min`,
+        formatTimerClock(Number(day.minutes || 0) * 60),
         `${Number(day.reviews || 0)} ${explanationText('reviews', 'herhalingen')}`,
         `${Number(day.speaking || 0)} ${explanationText('speaking attempts', 'spreekpogingen')}`,
       ].join(' · ');
@@ -2479,7 +2615,7 @@ const openProgressDetail = (detail) => {
           <span><strong>🔥 ${state.stats.streak || 0}</strong><small>${escapeHtml(explanationText('current streak', 'huidige reeks'))}</small></span>
           <span><strong>${state.stats.bestStreak || 0}</strong><small>${escapeHtml(explanationText('best streak', 'beste reeks'))}</small></span>
           <span><strong>${activeDays}/42</strong><small>${escapeHtml(explanationText('active days', 'actieve dagen'))}</small></span>
-          <span><strong>${totalMinutes}</strong><small>${escapeHtml(explanationText('minutes in six weeks', 'minuten in 6 weken'))}</small></span>
+          <span><strong>${Math.round(totalMinutes)}</strong><small>${escapeHtml(explanationText('minutes in six weeks', 'minuten in 6 weken'))}</small></span>
         </div>
         <section class="progress-detail-panel streak-calendar-panel">
           <div class="streak-calendar-legend"><span><i class="active"></i>${escapeHtml(explanationText('Active', 'Actief'))}</span><span><i class="goal"></i>${escapeHtml(explanationText('Daily goal reached', 'Dagdoel behaald'))}</span><span><i class="inactive"></i>${escapeHtml(explanationText('Inactive', 'Inactief'))}</span></div>
@@ -2754,6 +2890,7 @@ const startSession = ({ mode = 'smart', topic = null, itemIds = null, length = 8
     hintRecallCompleted: false,
     autofocusTarget: exercises[0]?.type === 'typing' ? 'answer' : null,
     startedAt: Date.now(),
+    trackedMinutesAtStart: getLiveMinutesToday(),
     summarySaved: false,
   };
   document.body.style.overflow = 'hidden';
@@ -3141,10 +3278,10 @@ const renderPlacementTest = () => {
 const currentExercise = () => session?.exercises?.[session.index] || null;
 
 const HINT_STEP_LABELS = [
-  'Need a hint',
-  'Show the structure',
-  'Reveal one anchor',
-  'Explain the pattern',
+  'Need a nudge',
+  'Give me a starting point',
+  'Reveal one useful word',
+  'Explain the exact rule',
   'Show answer + recall',
 ];
 
@@ -3236,10 +3373,10 @@ const renderSessionHintPanel = (exercise) => {
     <section class="progressive-hint level-${hint.level}" aria-live="polite">
       <div class="hint-head">
         <span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span>
-        <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>
+        <span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hintTitleText(hint))}</small></span>
         ${renderHintMeter(hint.level)}
       </div>
-      ${hideCopyForRecall ? `<p class="hint-primary">The model answer is hidden. Retrieve it once now.</p>` : `<p class="hint-primary">${escapeHtml(primaryCopy || '')}</p>${secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}`}
+      ${renderHintGuidance(hint, { hiddenText: hideCopyForRecall ? explanationText('The model answer is hidden. Retrieve it once now.', 'Het voorbeeldantwoord is verborgen. Haal het nu één keer zelf terug.') : '', targetLanguage: exercise.answerKind === 'meaning' ? explanationCode().toLowerCase() : 'pl' })}
     </section>
     ${renderSessionHintRecall(exercise)}
   `;
@@ -3270,7 +3407,7 @@ const renderSession = () => {
       <div class="progress-track"><span style="width:${complete ? 100 : Math.round(session.index / session.exercises.length * 100)}%"></span></div>
       <span>${Math.min(session.index + 1, session.exercises.length)} / ${session.exercises.length}</span>
     </div>
-    <span class="session-score">${icon('target')} ${session.score}</span>
+    <span class="session-score" aria-label="${escapeHtml(explanationText('Active study time', 'Actieve oefentijd'))}">${icon('clock')} <span data-live-session-elapsed>${formatTimerClock(Math.max(0, Math.floor((getLiveMinutesToday() - Number(session.trackedMinutesAtStart || 0)) * 60)))}</span></span>
   `;
   const stageMarkup = complete ? renderSessionSummary() : renderExercise(currentExercise());
   const footerMarkup = complete ? renderCompleteSessionFooter() : renderSessionFooter();
@@ -3495,10 +3632,11 @@ const renderSessionFooter = () => {
 
 const finalizeSession = () => {
   if (!session || session.summarySaved) return;
-  const minutes = Math.max(2, Math.round((Date.now() - session.startedAt) / 60_000), Math.ceil(session.exercises.length * 0.45));
+  tickActiveStudyTime({ forceCommit: true });
+  const trackedMinutes = Math.max(0, getLiveMinutesToday() - Number(session.trackedMinutesAtStart || 0));
   state.stats.sessions += 1;
-  addActivity(state, { minutes });
-  session.minutes = minutes;
+  session.activeSeconds = Math.max(0, Math.round(trackedMinutes * 60));
+  session.minutes = trackedMinutes;
   session.summarySaved = true;
   save({ immediate: true });
 };
@@ -3523,7 +3661,7 @@ const renderSessionSummary = () => {
       <div class="summary-grid">
         <div class="summary-stat"><strong>${correct}/${session.exercises.length}</strong><span>retrieved correctly</span></div>
         <div class="summary-stat"><strong>${strong}</strong><span>strong without heavy hints</span></div>
-        <div class="summary-stat"><strong>${session.minutes || 0} min</strong><span>focused practice</span></div>
+        <div class="summary-stat"><strong>${formatTimerClock(session.activeSeconds || Math.round(Number(session.minutes || 0) * 60))}</strong><span>${escapeHtml(explanationText('focused practice', 'gerichte oefentijd'))}</span></div>
       </div>
       <div class="hint-session-recap ${hinted ? 'supported' : 'independent'}">
         <span>${icon(hinted ? 'lightbulb' : 'brain')}</span>
@@ -3832,6 +3970,7 @@ const skipCurrentExercise = () => {
 
 const closeSession = ({ force = false } = {}) => {
   if (!session) return;
+  tickActiveStudyTime({ forceCommit: true });
   const complete = session.index >= session.exercises.length;
   if (!force && !complete && session.index > 0 && !window.confirm(uiText('End this session? Your completed reviews are already saved.'))) return;
   if (mediaRecorder?.state === 'recording') mediaRecorder.stop();
@@ -3964,9 +4103,8 @@ const renderRapidHintPanel = (item) => {
   const secondaryCopy = '';
   return `
     <div class="progressive-hint game-progressive-hint level-${hint.level}">
-      <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>${renderHintMeter(hint.level)}</div>
-      <p class="hint-primary">${escapeHtml(hideModel ? 'The meaning is hidden. Type it from memory before continuing.' : primaryCopy || '')}</p>
-      ${!hideModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+      <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hintTitleText(hint))}</small></span>${renderHintMeter(hint.level)}</div>
+      ${renderHintGuidance(hint, { hiddenText: hideModel ? explanationText('The meaning is hidden. Type it from memory before continuing.', 'De betekenis is verborgen. Typ die uit je geheugen voordat je doorgaat.') : '', targetLanguage: explanationCode().toLowerCase() })}
     </div>
   `;
 };
@@ -3996,31 +4134,48 @@ const buildMatchingHint = (item, level) => {
   const dutchType = translateUiText(item.type || 'word', 'nl');
   const firstPl = [...String(item.pl || '')][0] || '';
   const firstMeaning = [...String(meaning || '')][0] || '';
+  const example = String(item.example || '').trim();
   if (level === 1) return {
-    level, title: 'Gentle nudge',
-    en: `Look for a ${item.type || 'word'} pair. The Polish side begins with “${firstPl}”; the meaning begins with “${firstMeaning}”.`,
-    nl: `Zoek een paar met een ${dutchType || 'woord'}. De Poolse kant begint met “${firstPl}”; de betekenis met “${firstMeaning}”.`,
+    level,
+    title: 'Choose which side to search first', titleEn: 'Choose which side to search first', titleNl: 'Kies eerst aan welke kant je zoekt',
+    en: `Find the Polish ${item.type || 'word'} first. It begins with “${firstPl}…”. Its matching meaning begins with “${firstMeaning}…”.`,
+    nl: `Zoek eerst het Poolse ${dutchType || 'woord'}. Het begint met “${firstPl}…”. De bijbehorende betekenis begint met “${firstMeaning}…”.`,
+    actionEn: 'Scan only the unmatched cards with those initials; ignore the rest for this move.',
+    actionNl: 'Bekijk voor deze zet alleen de ongekoppelde kaarten met die beginletters en negeer de rest.',
   };
   if (level === 2) return {
-    level, title: 'Pair structure',
-    en: `Match this shape: ${maskGameText(item.pl, true)} ↔ ${maskGameText(meaning, true)}`,
-    nl: `Koppel deze vorm: ${maskGameText(item.pl, true)} ↔ ${maskGameText(meaning, true)}`,
+    level,
+    title: 'Use the word shape', titleEn: 'Use the word shape', titleNl: 'Gebruik de woordvorm',
+    en: `The pair has this visible shape. Use length and the first letter before guessing from memory.`,
+    nl: `Het paar heeft deze zichtbare vorm. Gebruik eerst de lengte en beginletter voordat je uit je geheugen gokt.`,
+    structure: `${maskGameText(item.pl, true)} ↔ ${maskGameText(meaning, true)}`,
+    actionEn: 'Point to the Polish card first, then search for one meaning that fits the same idea.',
+    actionNl: 'Kies eerst de Poolse kaart en zoek daarna één betekenis die bij hetzelfde idee past.',
   };
   if (level === 3) return {
-    level, title: 'One anchor card',
-    en: `The Polish anchor is “${item.pl}”. Find its meaning without revealing the pair yet.`,
-    nl: `Het Poolse anker is “${item.pl}”. Zoek de betekenis zonder het hele paar al te tonen.`,
+    level,
+    title: 'Anchor the Polish card', titleEn: 'Anchor the Polish card', titleNl: 'Veranker de Poolse kaart',
+    en: `The Polish card is “${item.pl}”.${example ? ` Picture it in: “${example}”` : ''}`,
+    nl: `De Poolse kaart is “${item.pl}”.${example ? ` Zie het voor je in: “${example}”` : ''}`,
+    actionEn: 'Say what it means before touching a card, then select the best match.',
+    actionNl: 'Zeg eerst wat het betekent voordat je een kaart aanraakt en kies daarna de beste koppeling.',
   };
   if (level === 4) return {
-    level, title: 'Meaning in context',
-    en: `${item.example ? `Picture the line “${item.example}”. ` : ''}Use the word as a ${item.type || 'conversation word'}, not as an isolated translation.`,
-    nl: `${item.example ? `Denk aan de zin “${item.example}”. ` : ''}Gebruik het als ${dutchType || 'gesprekswoord'}, niet als losse vertaling.`,
+    level,
+    title: 'Retrieve in the opposite direction', titleEn: 'Retrieve in the opposite direction', titleNl: 'Haal het in de andere richting terug',
+    en: `The meaning is “${meaning}”. Find the Polish card and say it once before selecting it.`,
+    nl: `De betekenis is “${meaning}”. Zoek de Poolse kaart en zeg die één keer voordat je hem selecteert.`,
+    actionEn: 'Do not compare every card. Produce the Polish word first, then look for that exact shape.',
+    actionNl: 'Vergelijk niet alle kaarten. Produceer eerst het Poolse woord en zoek daarna precies die vorm.',
   };
   return {
-    level, title: 'Pair, then active recall',
-    en: `Study the pair briefly: ${item.pl} ↔ ${meaning}`,
-    nl: `Bekijk het paar kort: ${item.pl} ↔ ${meaning}${secondary ? ` (${secondary})` : ''}`,
-    answer: `${item.pl} ↔ ${meaning}`,
+    level,
+    title: 'Study once, then find the pair', titleEn: 'Study once, then find the pair', titleNl: 'Bekijk één keer en zoek daarna het paar',
+    en: 'Study the complete pair briefly. It will be hidden before you select the cards.',
+    nl: 'Bekijk het volledige paar kort. Het wordt verborgen voordat je de kaarten kiest.',
+    actionEn: 'Say both sides once, hide them, and find the pair without copying.',
+    actionNl: 'Zeg beide kanten één keer, verberg ze en zoek het paar zonder over te schrijven.',
+    answer: `${item.pl} ↔ ${meaning}${secondary ? ` (${secondary})` : ''}`,
     requiresRecall: true,
   };
 };
@@ -4044,9 +4199,8 @@ const renderMatchingHintPanel = () => {
   const secondaryCopy = '';
   return `
     <div class="progressive-hint game-progressive-hint level-${hint.level}">
-      <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hint.title || '')}</small></span>${renderHintMeter(hint.level)}</div>
-      <p class="hint-primary">${escapeHtml(hideModel ? 'The pair is hidden again. Find both cards now.' : primaryCopy || '')}</p>
-      ${!hideModel && secondaryCopy ? `<p class="hint-secondary" lang="nl">${escapeHtml(secondaryCopy)}</p>` : ''}
+      <div class="hint-head"><span class="hint-icon">${icon(hint.level >= 4 ? 'brain' : 'lightbulb')}</span><span><strong>Hint ${hint.level} of 5</strong><small>${escapeHtml(hintTitleText(hint))}</small></span>${renderHintMeter(hint.level)}</div>
+      ${renderHintGuidance(hint, { hiddenText: hideModel ? explanationText('The pair is hidden again. Find both cards now.', 'Het paar is opnieuw verborgen. Zoek nu beide kaarten.') : '', targetLanguage: 'pl' })}
       ${studyModel ? `<div class="conversation-model-recall"><strong>${escapeHtml(hint.answer || '')}</strong><p>Hide it before selecting the cards.</p><button class="primary-button" type="button" data-action="begin-matching-recall">Hide pair and find it ${icon('arrow')}</button></div>` : ''}
     </div>
   `;
@@ -5674,11 +5828,15 @@ const initialize = async () => {
     patternSelections[pattern.id] = { ...pattern.default };
   });
 
+  document.addEventListener('pointerdown', markStudyInteraction, { passive: true });
+  document.addEventListener('touchstart', markStudyInteraction, { passive: true });
+  document.addEventListener('input', markStudyInteraction, { passive: true });
+  document.addEventListener('scroll', markStudyInteraction, { passive: true, capture: true });
   document.addEventListener('click', handleAction);
   document.addEventListener('submit', handleSubmit);
   document.addEventListener('input', handleInput);
   document.addEventListener('change', handleChange);
-  document.addEventListener('keydown', handleKeydown);
+  document.addEventListener('keydown', (event) => { markStudyInteraction(); handleKeydown(event); });
   window.addEventListener('online', updateConnectionStatus);
   window.addEventListener('offline', updateConnectionStatus);
   window.addEventListener('popstate', () => {
@@ -5687,7 +5845,16 @@ const initialize = async () => {
     renderView();
     updateShell();
   });
-  window.addEventListener('beforeunload', () => flushState());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') pauseActiveTimeTracking();
+    else {
+      activeTimeLastTickAt = Date.now();
+      activeTimeLastInteractionAt = Date.now();
+      updateTimeDisplays();
+    }
+  });
+  window.addEventListener('pagehide', pauseActiveTimeTracking);
+  window.addEventListener('beforeunload', () => { pauseActiveTimeTracking(); flushState(); });
   window.addEventListener('scroll', () => document.querySelector('.topbar')?.classList.toggle('scrolled', window.scrollY > 3), { passive: true });
 
   document.getElementById('profile-button').addEventListener('click', openSettings);
@@ -5705,6 +5872,7 @@ const initialize = async () => {
   hydrateStaticIcons(document);
   updateShell();
   renderView();
+  startActiveTimeTracking();
   setupInstallPrompt();
   registerServiceWorker();
   updateConnectionStatus();

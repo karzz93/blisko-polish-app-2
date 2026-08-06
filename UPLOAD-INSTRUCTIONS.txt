@@ -1,7 +1,7 @@
-BLISKO 1.9.1 - INTERACTIVE PROGRESS DETAILS
+BLISKO 1.9.3 - ACTIONABLE HINTS
 
-Upload the full contents of this folder to the same web location as the previous build.
+Upload the complete contents of this folder together. Do not mix these files with an older build.
 
-Version 1.9.1 makes all four summary cards on the Progress screen interactive. The corner icons open detailed level, vocabulary, streak-calendar, and conversation-readiness views while preserving the compact overview.
+Version 1.9.3 replaces vague frame-based tips with a five-step support ladder. Hints now give a clear intention, a real starting word, useful initials, one content anchor, and the exact grammar rule when relevant. Every hint ends with one immediate action so the learner practises retrieval instead of only reading advice.
 
-After deployment, open the app once while online so the service worker can install the 1.9.1 shell. If an older screen remains visible, use Settings > Repair downloaded app files once. Learning progress is not deleted.
+After deployment, open the app once while online so the service worker can install the 1.9.3 shell. If an older screen remains visible, use Settings > Repair downloaded app files once. Learning progress is not deleted.
